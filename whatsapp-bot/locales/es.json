@@ -1,0 +1,5 @@
+{
+  "greeting": "¡Hola! 👋 Bienvenido a nuestro bot de WhatsApp. ¿En qué puedo ayudarte hoy? Escribe 'ayuda' para ver los comandos disponibles.",
+  "help": "Comandos disponibles:\n- hola: Recibir un saludo\n- ayuda: Mostrar este mensaje de ayuda\n\nPara cambiar el idioma, comienza tu mensaje con el código de idioma (en, fr, de, hi, ar) seguido de tu mensaje.\nEjemplo: 'en hello' para inglés",
+  "unknown_command": "Lo siento, no entendí ese comando. Escribe 'ayuda' para ver los comandos disponibles."
+}
