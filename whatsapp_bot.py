@@ -171,7 +171,7 @@ def whatsapp_bot():
                 for link in info.get("buy_links", []):
                     response += f"• {link}\n"
             
-            response += "\n💡 *Need more help?* Reply with 'tips' for more advice or 'products' for purchase links."
+            response += "\n💡 *Need more help?* Reply with 'products' for purchase links."
             
             resp.message(response)
             print("📤 Prevention tips and products sent")
