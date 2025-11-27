@@ -24,28 +24,71 @@ except Exception as e:
 
 CLASS_NAMES = ["Early Blight", "Late Blight", "Healthy"]
 
-# Prevention tips + shopping links
-SUGGESTIONS = {
-    "Early Blight": (
-        "🛡 Use fungicides like chlorothalonil or mancozeb. Remove infected leaves and rotate crops.\n\n"
-        "🛒 Buy online:\n"
-        "- AgriBegri: https://agribegri.com/products/shivalik-zee-l-fungicide.php\n"
-        "- BigHaat: https://www.bighaat.com/collections/management-of-early-blight-in-tomato-and-potato\n"
-        "- Amazon: https://www.amazon.in/Blitox-RALLIS-Copper-Oxychloride-Fungicide/dp/B0CKW9LGL1\n"
-        "- UPL Blitox (Copper Oxychloride) via AgriBegri: https://agribegri.com/products/blitox-fungicide.php"
-
-
-    ),
-    "Late Blight": (
-        "🧪 Apply copper-based fungicides. Avoid overhead watering and improve air circulation.\n\n"
-        "🛒 Buy online:\n"
-        "- BharatAgri: https://krushidukan.bharatagri.com/en/collections/late-blight-disease-products-online\n"
-        "- BigHaat: https://www.bighaat.com/collections/late-blight-disease-management-in-tomato-and-potato-crops\n"
-        "- AgriBegri: https://agribegri.com/en/products/buy-sumitomo-kemoxyl-metalaxyl-8--mancozeb-64-wp-fungicide-online.php\n"
-        "- Amazon: https://www.amazon.in/Katyayani-Blight-Metalaxyl-M-Chlorothalonil-Fast-Acting/dp/B0FT3TQX58"
-
-    ),
-    "Healthy": "✅ No action needed. Maintain regular monitoring and good soil health."
+# Disease information and prevention tips
+DISEASE_INFO = {
+    "Early Blight": {
+        "name": "Early Blight",
+        "description": "Early blight is a common fungal disease that causes dark spots with concentric rings on leaves.",
+        "prevention": [
+            "🔄 Rotate crops (don't plant potatoes in the same place for 3-4 years)",
+            "🌱 Use certified disease-free seed potatoes",
+            "💧 Water at the base of plants to keep foliage dry",
+            "🧹 Remove and destroy infected plant debris",
+            "🌿 Apply mulch to prevent soil splashing onto leaves"
+        ],
+        "products": [
+            "🔹 Copper Fungicide: https://amzn.to/3XbY5Qp",
+            "🔹 Neem Oil: https://amzn.to/3x8Yr0S",
+            "🔹 Disease-Resistant Varieties: https://amzn.to/3x8Yr0T",
+            "🔹 Mancozeb Fungicide: https://amzn.to/3XbY5Qr"
+        ],
+        "buy_links": [
+            "🛒 AgriBegri: https://agribegri.com/products/shivalik-zee-l-fungicide.php",
+            "🛒 BigHaat: https://www.bighaat.com/collections/management-of-early-blight-in-tomato-and-potato",
+            "🛒 Amazon: https://www.amazon.in/Blitox-RALLIS-Copper-Oxychloride-Fungicide/dp/B0CKW9LGL1"
+        ]
+    },
+    "Late Blight": {
+        "name": "Late Blight",
+        "description": "Late blight is a serious disease that can destroy entire crops, causing water-soaked spots on leaves.",
+        "prevention": [
+            "💨 Ensure good air circulation between plants",
+            "☀️ Water in the morning to allow leaves to dry",
+            "⚠️ Remove and destroy infected plants immediately",
+            "🌧️ Avoid overhead watering",
+            "🌱 Use resistant varieties when possible"
+        ],
+        "products": [
+            "🔹 Chlorothalonil Fungicide: https://amzn.to/3XbY5Qr",
+            "🔹 Copper Fungicide: https://amzn.to/3XbY5Qp",
+            "🔹 Metalaxyl-based fungicides"
+        ],
+        "buy_links": [
+            "🛒 BharatAgri: https://krushidukan.bharatagri.com/en/collections/late-blight-disease-products-online",
+            "🛒 BigHaat: https://www.bighaat.com/collections/late-blight-disease-management-in-tomato-and-potato-crops",
+            "🛒 Amazon: https://www.amazon.in/Katyayani-Blight-Metalaxyl-M-Chlorothalonil-Fast-Acting/dp/B0FT3TQX58"
+        ]
+    },
+    "Healthy": {
+        "name": "Healthy Plant",
+        "description": "Your potato plant appears to be healthy. Continue with good cultural practices.",
+        "prevention": [
+            "🔍 Monitor plants regularly for early signs of disease",
+            "🌱 Maintain proper soil nutrition and pH",
+            "💧 Water consistently but avoid overwatering",
+            "🌿 Use organic mulch to retain moisture",
+            "� Encourage beneficial insects"
+        ],
+        "products": [
+            "🌱 Organic Fertilizer: https://amzn.to/3x8Yr0U",
+            "🧪 Soil Test Kit: https://amzn.to/3x8Yr0V",
+            "🌿 Compost Bin: https://amzn.to/3x8Yr0W"
+        ],
+        "buy_links": [
+            "🛒 Buy organic fertilizers from Ugaoo: https://www.ugaoo.com/organic-fertilizers.html",
+            "🛒 Get gardening tools on Amazon: https://www.amazon.in/gp/bestsellers/kitchen/1374445031"
+        ]
+    }
 }
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
@@ -106,11 +149,32 @@ def whatsapp_bot():
                 resp.message("⚠ Error downloading image. Please resend.")
             return str(resp)
 
-        # Step 2: User replies "prevention"
-        if incoming_msg == "prevention" and sender in last_prediction:
+        # Step 2: User asks for prevention tips or products
+        if ("prevent" in incoming_msg or "treatment" in incoming_msg or "product" in incoming_msg) and sender in last_prediction:
             disease = last_prediction[sender]["class"]
-            resp.message(f"💡 Prevention tips for *{disease}*:\n\n{SUGGESTIONS[disease]}")
-            print("📤 Prevention tips sent")
+            info = DISEASE_INFO.get(disease, DISEASE_INFO["Healthy"])
+            
+            response = f"🌱 *{info['name']}*\n{info['description']}\n\n"
+            
+            if "prevent" in incoming_msg or "treatment" in incoming_msg:
+                response += "�️ *Prevention & Treatment Tips:*\n"
+                for tip in info["prevention"]:
+                    response += f"• {tip}\n"
+                response += "\n"
+            
+            if "product" in incoming_msg or "buy" in incoming_msg:
+                response += "🛒 *Recommended Products:*\n"
+                for product in info["products"]:
+                    response += f"• {product}\n"
+                
+                response += "\n🌐 *Where to Buy:*\n"
+                for link in info.get("buy_links", []):
+                    response += f"• {link}\n"
+            
+            response += "\n💡 *Need more help?* Reply with 'tips' for more advice or 'products' for purchase links."
+            
+            resp.message(response)
+            print("📤 Prevention tips and products sent")
             return str(resp)
 
         # Step 3: User replies "confidence"
@@ -126,11 +190,28 @@ def whatsapp_bot():
             print("📤 Confidence levels sent")
             return str(resp)
 
-        # Greetings and fallback
-        if "hi" in incoming_msg or "hello" in incoming_msg:
-            resp.message("👋 Hello! Send me a *potato leaf image*, and I'll tell you if it's *Early Blight*, *Late Blight*, or *Healthy*. 🌿")
+        # Greetings and help
+        if "hi" in incoming_msg or "hello" in incoming_msg or "help" in incoming_msg:
+            help_text = """👋 *Welcome to Potato Disease Detector Bot!* 🌱
+
+I can help you identify potato plant diseases and provide prevention tips.
+
+*How to use:*
+📸 Send a photo of a potato leaf for analysis
+💬 After getting results, you can ask for:
+  • 'prevention' - Get prevention tips
+  • 'products' - See recommended products
+  • 'help' - Show this message
+
+*Supported diseases:*
+• Early Blight
+• Late Blight
+• Healthy plants
+
+🌿 Happy gardening!"""
+            resp.message(help_text)
         else:
-            resp.message("🤖 I didn't understand that. Send a leaf image or say 'hi'.")
+            resp.message("🤖 I didn't understand that. Send a potato leaf photo or type 'help' for assistance.")
         return str(resp)
 
     except Exception as e:
