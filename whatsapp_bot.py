@@ -91,27 +91,47 @@ def predict_image(image_bytes):
         
         # Make prediction
         predictions = model.predict(img_array)
-        decoded_predictions = decode_predictions(predictions, top=3)[0]
+        decoded_predictions = decode_predictions(predictions, top=5)[0]  # Get top 5 predictions
         
-        # Convert to our class format
-        results = {}
+        # Initialize results with all classes
+        results = {class_name: 0.0 for class_name in CLASS_NAMES}
+        
+        # Map ImageNet classes to our classes
         for _, label, prob in decoded_predictions:
             label_lower = label.lower()
-            if 'blight' in label_lower or 'disease' in label_lower:
-                if 'early' in label_lower:
-                    results['Early Blight'] = float(prob) * 100
+            prob_percent = float(prob) * 100
+            
+            # Early Blight indicators
+            if any(keyword in label_lower for keyword in ['blight', 'spot', 'spotting', 'leaf spot', 'leafspot', 'disease', 'fungal']):
+                if any(keyword in label_lower for keyword in ['early', 'alternaria']):
+                    results['Early Blight'] += prob_percent * 1.5  # Boost early blight probability
+                elif any(keyword in label_lower for keyword in ['late', 'phytophthora']):
+                    results['Late Blight'] += prob_percent * 1.5  # Boost late blight probability
                 else:
-                    results['Late Blight'] = float(prob) * 100
-            else:
-                results['Healthy'] = float(prob) * 100
+                    # General blight/disease terms - split between early and late blight
+                    results['Early Blight'] += prob_percent * 0.7
+                    results['Late Blight'] += prob_percent * 0.8
+            
+            # Healthy indicators
+            elif any(keyword in label_lower for keyword in ['leaf', 'plant', 'foliage', 'green', 'healthy']):
+                results['Healthy'] += prob_percent
         
-        # Ensure all classes are present
-        for class_name in CLASS_NAMES:
-            if class_name not in results:
-                results[class_name] = 0.0
+        # Normalize results to sum to 100%
+        total = sum(results.values())
+        if total > 0:
+            results = {k: (v / total) * 100 for k, v in results.items()}
         
         # Get the class with highest probability
         predicted_class = max(results.items(), key=lambda x: x[1])[0]
+        
+        # Add some basic validation
+        if predicted_class == 'Healthy' and results['Healthy'] < 60:
+            # If healthy is predicted but confidence is low, check for diseases
+            if results['Early Blight'] > 30:
+                predicted_class = 'Early Blight'
+            elif results['Late Blight'] > 30:
+                predicted_class = 'Late Blight'
+        
         print(f"✅ Prediction: {predicted_class} | {results}")
         return predicted_class, results
         
