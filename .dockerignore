@@ -5,19 +5,55 @@
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
 env/
 venv/
 ENV/
+.pytest_cache/
+.mypy_cache/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+
+# Project specific
+*.keras
+*.h5
+*.tflite
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# Local development
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Data directories
+data/
+data_resized/
 
 # Local development
 .env
