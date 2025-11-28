@@ -23,9 +23,10 @@ ENV/
 *~
 
 # Project specific
-*.keras
-*.h5
-*.tflite
+# Keep model files
+# !potato_disease_model.keras
+# !best_model.keras
+# !potato_disease_model.tflite
 *.png
 *.jpg
 *.jpeg

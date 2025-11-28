@@ -20,16 +20,21 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy only necessary files first to leverage Docker cache
+COPY app.py whatsapp_bot.py requirements.txt ./
+
+# Copy model files
+COPY potato_disease_model.keras best_model.keras potato_disease_model.tflite ./
 
 # Verify the model file is present
-RUN echo "Verifying model file exists..." && \
+RUN echo "Verifying model files exist..." && \
     if [ ! -f "potato_disease_model.keras" ]; then \
         echo "Error: Model file not found!" && \
+        echo "Current directory contents:" && \
         ls -la && \
         exit 1; \
-    fi
+    fi && \
+    echo "Model files verified successfully"
 
 # Expose the port the app runs on
 EXPOSE $PORT
