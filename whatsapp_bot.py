@@ -169,30 +169,58 @@ def whatsapp_webhook():
         # 2. Handle image upload
         if num_media > 0:
             media_url = request.values.get("MediaUrl0")
-            print(f"📥 Downloading image: {media_url}")
+            print(f"📥 Downloading image from: {media_url}")
             
             try:
-                # Download media
-                image_response = requests.get(media_url, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN))
+                # Download the image with proper headers
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+                image_response = requests.get(
+                    media_url,
+                    auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                    headers=headers,
+                    stream=True
+                )
+                
                 if image_response.status_code == 200:
-                    # Preprocess and predict
-                    predicted_class, results = predict_image(image_response.content)
+                    print("✅ Successfully downloaded image")
+                    image_bytes = image_response.content
                     
-                    # Store prediction for follow-up questions
-                    last_prediction[sender] = {"class": predicted_class, "results": results}
+                    # Save the image temporarily for debugging
+                    with open('temp_image.jpg', 'wb') as f:
+                        f.write(image_bytes)
+                    print("💾 Saved image temporarily for debugging")
                     
-                    # Format response
-                    response = f"🌿 *Prediction Result*\n\n"
-                    response += f"✅ Detected: *{predicted_class}*\n\n"
-                    response += "Reply with:\n• 'prevention' for tips\n• 'products' for recommended products"
-                    
-                    resp.message(response)
-                    print("📤 Prediction reply sent")
+                    # Process the image
+                    try:
+                        predicted_class, results = predict_image(image_bytes)
+                        print(f"🎯 Prediction result: {predicted_class}")
+                        
+                        # Store prediction for follow-up
+                        last_prediction[sender] = {"class": predicted_class, "results": results}
+                        
+                        # Prepare response
+                        response = f"🌿 *Analysis Complete!*\n\n"
+                        response += f"✅ Detected: *{predicted_class}*\n\n"
+                        response += "💡 What would you like to know?\n"
+                        response += "• 'prevention' - Get prevention tips\n"
+                        response += "• 'products' - Recommended products\n"
+                        response += "• 'confidence' - See prediction confidence"
+                        
+                        resp.message(response)
+                        print("📤 Sent prediction response")
+                        
+                    except Exception as e:
+                        print(f"❌ Error in image processing: {str(e)}")
+                        resp.message("❌ Oops! I had trouble processing that image. Please try with a clearer photo of a potato leaf.")
                 else:
-                    resp.message("⚠️ Error downloading image. Please try again.")
+                    print(f"❌ Failed to download image. Status code: {image_response.status_code}")
+                    resp.message("⚠️ I couldn't download that image. Please try sending it again.")
+                    
             except Exception as e:
-                print(f"Error processing image: {e}")
-                resp.message("❌ Error processing image. Please try again with a clearer photo.")
+                print(f"❌ Error downloading image: {str(e)}")
+                resp.message("❌ Something went wrong while processing your image. Please try again.")
             
             return str(resp)
 
