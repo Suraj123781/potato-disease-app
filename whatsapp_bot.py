@@ -1,6 +1,6 @@
 import os
 import io
-import requests
+import requests  
 import numpy as np
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
@@ -43,9 +43,9 @@ DISEASE_INFO = {
             "Apply fungicides preventatively"
         ],
         "products": [
-            {"name": "Bonide Copper Fungicide", "url": "https://www.amazon.com/Bonide-811-Copper-Fungicide-16-oz/dp/B000HHO1TO"},
-            {"name": "Southern Ag Liquid Copper Fungicide", "url": "https://www.amazon.com/Southern-Ag-Liquid-Copper-Fungicide/dp/B000I1VZ9K"},
-            {"name": "Garden Safe Fungicide 3", "url": "https://www.amazon.com/Garden-Safe-100511831-Fungicide-24-Ounce/dp/B00BRLU4Q6"}
+            "Copper-based fungicides",
+            "Chlorothalonil-based sprays",
+            "Mancozeb fungicides"
         ]
     },
     "Late Blight": {
@@ -58,9 +58,9 @@ DISEASE_INFO = {
             "Apply fungicides before infection"
         ],
         "products": [
-            {"name": "Bonide Copper Fungicide", "url": "https://www.amazon.com/Bonide-811-Copper-Fungicide-16-oz/dp/B000HHO1TO"},
-            {"name": "Daconil Fungicide Concentrate", "url": "https://www.amazon.com/Spectracide-100507514-Immunox-Multi-Purpose-Fungicide/dp/B00BRLU4Q6"},
-            {"name": "GardenTech Daconil Fungicide", "url": "https://www.amazon.com/GardenTech-Daconil-Fungicide-16-Ounce-100540634/dp/B00BRLU4Q6"}
+            "Copper fungicides",
+            "Chlorothalonil",
+            "Metalaxyl-based fungicides"
         ]
     },
     "Healthy": {
@@ -73,9 +73,9 @@ DISEASE_INFO = {
             "Water at the base of plants"
         ],
         "products": [
-            {"name": "Jobe's Organics Vegetable Fertilizer", "url": "https://www.amazon.com/Jobes-09026-Organic-Vegetable-Fertilizer/dp/B00BRLU4Q6"},
-            {"name": "Dr. Earth Organic Compost", "url": "https://www.amazon.com/Dr-Earth-803-Organic-Compost/dp/B00BRLU4Q6"},
-            {"name": "Miracle-Gro Plant Food", "url": "https://www.amazon.com/Miracle-Gro-Water-Soluble-Plant-Fertilizer/dp/B00BRLU4Q6"}
+            "Balanced NPK fertilizer",
+            "Organic compost",
+            "General plant vitamins"
         ]
     }
 }
@@ -89,67 +89,41 @@ def predict_image(image_bytes):
         img_array = np.expand_dims(img_array, axis=0)
         img_array = preprocess_input(img_array)
         
-        # Get model predictions
+        # Make prediction
         predictions = model.predict(img_array)
-        decoded_predictions = decode_predictions(predictions, top=10)[0]  # Get top 10 predictions
+        decoded_predictions = decode_predictions(predictions, top=3)[0]
         
-        # Initialize class weights
-        class_weights = {
-            'Early Blight': {'terms': ['early_blight', 'alternaria', 'fungal_spot', 'leaf_spot', 'target_spot'], 'weight': 1.0},
-            'Late Blight': {'terms': ['late_blight', 'phytophthora', 'blight', 'mildew'], 'weight': 1.0},
-            'Healthy': {'terms': ['leaf', 'foliage', 'plant', 'green', 'healthy', 'potato'], 'weight': 0.8}  # Slightly lower weight for healthy
-        }
-        
-        # Initialize scores
-        scores = {class_name: 0.0 for class_name in CLASS_NAMES}
-        
-        # Score each prediction
+        # Convert to our class format
+        results = {}
         for _, label, prob in decoded_predictions:
             label_lower = label.lower()
-            prob_score = float(prob)
-            
-            # Check each class for matching terms
-            for class_name, class_info in class_weights.items():
-                for term in class_info['terms']:
-                    if term in label_lower:
-                        scores[class_name] += prob_score * class_info['weight']
-                        break  # Only match once per class
+            if 'blight' in label_lower or 'disease' in label_lower:
+                if 'early' in label_lower:
+                    results['Early Blight'] = float(prob) * 100
+                else:
+                    results['Late Blight'] = float(prob) * 100
+            else:
+                results['Healthy'] = float(prob) * 100
         
-        # Add bonus for specific patterns
-        if any('spot' in pred[1].lower() for pred in decoded_predictions[:3]):
-            scores['Early Blight'] += 0.2
-        if any('blight' in pred[1].lower() for pred in decoded_predictions[:3]):
-            scores['Late Blight'] += 0.3
-        
-        # Normalize scores to sum to 1
-        total = sum(scores.values())
-        if total > 0:
-            scores = {k: (v / total) * 100 for k, v in scores.items()}
+        # Ensure all classes are present
+        for class_name in CLASS_NAMES:
+            if class_name not in results:
+                results[class_name] = 0.0
         
         # Get the class with highest probability
-        predicted_class = max(scores.items(), key=lambda x: x[1])[0]
-        
-        # Add confidence threshold
-        if scores[predicted_class] < 40:  # If no clear winner
-            if scores['Healthy'] > 30:  # Default to healthy if no clear disease
-                predicted_class = 'Healthy'
-        
-        print(f"🔍 Prediction Analysis:")
-        for class_name, score in scores.items():
-            print(f"   - {class_name}: {score:.2f}%")
-        print(f"✅ Final Prediction: {predicted_class}")
-        
-        return predicted_class, scores
+        predicted_class = max(results.items(), key=lambda x: x[1])[0]
+        print(f"✅ Prediction: {predicted_class} | {results}")
+        return predicted_class, results
         
     except Exception as e:
-        print("❌ Error in predict_image:", str(e))
-        # Return default healthy with low confidence
-        default_scores = {
+        print("❌ Error processing image:", e)
+        # Return mock data in case of error
+        mock_results = {
             "Early Blight": 10.0,
             "Late Blight": 10.0,
             "Healthy": 80.0
         }
-        return "Healthy (Error)", default_scores
+        return "Healthy (Error)", mock_results
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp_bot():
@@ -192,7 +166,7 @@ def whatsapp_bot():
             response = f"🌱 *{info['name']}*\n{info['description']}\n\n"
             
             if "prevent" in incoming_msg or "treatment" in incoming_msg:
-                response += "🌿 *Prevention & Treatment Tips:*\n"
+                response += "�️ *Prevention & Treatment Tips:*\n"
                 for tip in info["prevention"]:
                     response += f"• {tip}\n"
                 response += "\n"
@@ -200,7 +174,11 @@ def whatsapp_bot():
             if "product" in incoming_msg or "buy" in incoming_msg:
                 response += "🛒 *Recommended Products:*\n"
                 for product in info["products"]:
-                    response += f"• {product['name']}: {product['url']}\n"
+                    response += f"• {product}\n"
+                
+                response += "\n🌐 *Where to Buy:*\n"
+                for link in info.get("buy_links", []):
+                    response += f"• {link}\n"
             
             response += "\n💡 *Need more help?* Reply with 'products' for purchase links."
             
@@ -231,17 +209,13 @@ I can help you identify potato plant diseases and provide prevention tips.
 📸 Send a photo of a potato leaf for analysis
 💬 After getting results, you can ask for:
   • 'prevention' - Get prevention tips
-  • 'products' - See recommended products with direct purchase links
-  • 'confidence' - See confidence levels for the prediction
+  • 'products' - See recommended products
   • 'help' - Show this message
 
 *Supported diseases:*
 • Early Blight
 • Late Blight
 • Healthy plants
-
-🛒 *Product Links:*
-When you ask for 'products', I'll provide direct links to recommended treatments on Amazon for easy purchasing.
 
 🌿 Happy gardening!"""
             resp.message(help_text)
