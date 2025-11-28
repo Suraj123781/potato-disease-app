@@ -242,4 +242,4 @@ def plot_training_history(history):
     plt.savefig('training_history.png')
     plt.show()
 
-plot_training_history(history)
+plot_training_history(history) 
