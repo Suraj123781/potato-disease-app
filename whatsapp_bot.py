@@ -1,6 +1,7 @@
 import os
 import io
 import numpy as np
+import requests
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from PIL import Image, ImageOps
@@ -45,6 +46,11 @@ DISEASE_INFO = {
             "Copper-based fungicides",
             "Chlorothalonil-based sprays",
             "Mancozeb fungicides"
+        ],
+        "buy_links": [
+            "🔗 Copper Fungicide: https://amzn.in/d/8xWJ6X7",
+            "🔗 Chlorothalonil Spray: https://amzn.in/d/8xWJ6X7",
+            "🔗 Mancozeb Fungicide: https://amzn.in/d/8xWJ6X7"
         ]
     },
     "Late Blight": {
@@ -60,6 +66,11 @@ DISEASE_INFO = {
             "Copper fungicides",
             "Chlorothalonil",
             "Metalaxyl-based fungicides"
+        ],
+        "buy_links": [
+            "🔗 Copper Fungicide: https://amzn.in/d/8xWJ6X7",
+            "🔗 Chlorothalonil Fungicide: https://amzn.in/d/8xWJ6X7",
+            "🔗 Metalaxyl Fungicide: https://amzn.in/d/8xWJ6X7"
         ]
     },
     "Healthy": {
@@ -75,6 +86,11 @@ DISEASE_INFO = {
             "Balanced NPK fertilizer",
             "Organic compost",
             "General plant vitamins"
+        ],
+        "buy_links": [
+            "🔗 NPK 19:19:19 Fertilizer: https://amzn.in/d/8xWJ6X7",
+            "🔗 Organic Compost: https://amzn.in/d/8xWJ6X7",
+            "🔗 Seaweed Extract: https://amzn.in/d/8xWJ6X7"
         ]
     }
 }

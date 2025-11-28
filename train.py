@@ -1,6 +1,5 @@
 import os
 import cv2
-import requests
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
