@@ -27,10 +27,33 @@ TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 # Class names for predictions
 CLASS_NAMES = ["Early Blight", "Late Blight", "Healthy"]
 
+# Model configuration
+MODEL_CACHE_DIR = Path("model_cache")
+MODEL_CACHE_DIR.mkdir(exist_ok=True)
+MODEL_PATH = MODEL_CACHE_DIR / "mobilenet_v2_weights_tf_dim_ordering_tf_kernels_1.0_224.h5"
+
+def load_model():
+    print("🔍 Loading pre-trained MobileNetV2 model...")
+    try:
+        # Try to load from cache first
+        if MODEL_PATH.exists():
+            print("✅ Loading model from cache...")
+            return MobileNetV2(weights=str(MODEL_PATH))
+        
+        # If not in cache, download and save
+        print("🌐 Downloading MobileNetV2 weights...")
+        model = MobileNetV2(weights='imagenet')
+        model.save_weights(MODEL_PATH)
+        print("✅ Model downloaded and cached successfully!")
+        return model
+        
+    except Exception as e:
+        print(f"❌ Error loading model: {e}")
+        print("⚠️ Falling back to model with random weights")
+        return MobileNetV2(weights=None, classes=3)  # Fallback model
+
 # Initialize model
-print("🔍 Loading pre-trained MobileNetV2 model...")
-model = MobileNetV2(weights='imagenet')
-print("✅ Model loaded successfully!")
+model = load_model()
 
 # Store the last prediction for each user
 last_prediction = {}
@@ -172,15 +195,14 @@ def whatsapp_webhook():
             print(f"📥 Downloading image from: {media_url}")
             
             try:
-                # Download the image with proper headers
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                }
+                # Download the image with proper authentication
+                auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
                 image_response = requests.get(
                     media_url,
-                    auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                    headers=headers,
-                    stream=True
+                    auth=auth,
+                    headers={'User-Agent': 'Mozilla/5.0'},
+                    stream=True,
+                    timeout=10
                 )
                 
                 if image_response.status_code == 200:
@@ -215,12 +237,15 @@ def whatsapp_webhook():
                         print(f"❌ Error in image processing: {str(e)}")
                         resp.message("❌ Oops! I had trouble processing that image. Please try with a clearer photo of a potato leaf.")
                 else:
-                    print(f"❌ Failed to download image. Status code: {image_response.status_code}")
-                    resp.message("⚠️ I couldn't download that image. Please try sending it again.")
+                    print(f"❌ Failed to download image. Status: {image_response.status_code}")
+                    print(f"Response: {image_response.text}")
+                    resp.message("❌ Failed to process the image. Please try again.")
+                    return str(resp)
                     
-            except Exception as e:
-                print(f"❌ Error downloading image: {str(e)}")
-                resp.message("❌ Something went wrong while processing your image. Please try again.")
+            except requests.exceptions.RequestException as e:
+                print(f"❌ Request error: {str(e)}")
+                resp.message("⚠️ Couldn't connect to the image server. Please try again later.")
+                return str(resp)
             
             return str(resp)
 
