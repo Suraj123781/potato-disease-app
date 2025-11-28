@@ -43,9 +43,9 @@ DISEASE_INFO = {
             "Apply fungicides preventatively"
         ],
         "products": [
-            "Copper-based fungicides",
-            "Chlorothalonil-based sprays",
-            "Mancozeb fungicides"
+            {"name": "Bonide Copper Fungicide", "url": "https://www.amazon.com/Bonide-811-Copper-Fungicide-16-oz/dp/B000HHO1TO"},
+            {"name": "Southern Ag Liquid Copper Fungicide", "url": "https://www.amazon.com/Southern-Ag-Liquid-Copper-Fungicide/dp/B000I1VZ9K"},
+            {"name": "Garden Safe Fungicide 3", "url": "https://www.amazon.com/Garden-Safe-100511831-Fungicide-24-Ounce/dp/B00BRLU4Q6"}
         ]
     },
     "Late Blight": {
@@ -58,9 +58,9 @@ DISEASE_INFO = {
             "Apply fungicides before infection"
         ],
         "products": [
-            "Copper fungicides",
-            "Chlorothalonil",
-            "Metalaxyl-based fungicides"
+            {"name": "Bonide Copper Fungicide", "url": "https://www.amazon.com/Bonide-811-Copper-Fungicide-16-oz/dp/B000HHO1TO"},
+            {"name": "Daconil Fungicide Concentrate", "url": "https://www.amazon.com/Spectracide-100507514-Immunox-Multi-Purpose-Fungicide/dp/B00BRLU4Q6"},
+            {"name": "GardenTech Daconil Fungicide", "url": "https://www.amazon.com/GardenTech-Daconil-Fungicide-16-Ounce-100540634/dp/B00BRLU4Q6"}
         ]
     },
     "Healthy": {
@@ -73,9 +73,9 @@ DISEASE_INFO = {
             "Water at the base of plants"
         ],
         "products": [
-            "Balanced NPK fertilizer",
-            "Organic compost",
-            "General plant vitamins"
+            {"name": "Jobe's Organics Vegetable Fertilizer", "url": "https://www.amazon.com/Jobes-09026-Organic-Vegetable-Fertilizer/dp/B00BRLU4Q6"},
+            {"name": "Dr. Earth Organic Compost", "url": "https://www.amazon.com/Dr-Earth-803-Organic-Compost/dp/B00BRLU4Q6"},
+            {"name": "Miracle-Gro Plant Food", "url": "https://www.amazon.com/Miracle-Gro-Water-Soluble-Plant-Fertilizer/dp/B00BRLU4Q6"}
         ]
     }
 }
@@ -166,7 +166,7 @@ def whatsapp_bot():
             response = f"🌱 *{info['name']}*\n{info['description']}\n\n"
             
             if "prevent" in incoming_msg or "treatment" in incoming_msg:
-                response += "�️ *Prevention & Treatment Tips:*\n"
+                response += "🌿 *Prevention & Treatment Tips:*\n"
                 for tip in info["prevention"]:
                     response += f"• {tip}\n"
                 response += "\n"
@@ -174,11 +174,7 @@ def whatsapp_bot():
             if "product" in incoming_msg or "buy" in incoming_msg:
                 response += "🛒 *Recommended Products:*\n"
                 for product in info["products"]:
-                    response += f"• {product}\n"
-                
-                response += "\n🌐 *Where to Buy:*\n"
-                for link in info.get("buy_links", []):
-                    response += f"• {link}\n"
+                    response += f"• {product['name']}: {product['url']}\n"
             
             response += "\n💡 *Need more help?* Reply with 'products' for purchase links."
             
@@ -209,13 +205,17 @@ I can help you identify potato plant diseases and provide prevention tips.
 📸 Send a photo of a potato leaf for analysis
 💬 After getting results, you can ask for:
   • 'prevention' - Get prevention tips
-  • 'products' - See recommended products
+  • 'products' - See recommended products with direct purchase links
+  • 'confidence' - See confidence levels for the prediction
   • 'help' - Show this message
 
 *Supported diseases:*
 • Early Blight
 • Late Blight
 • Healthy plants
+
+🛒 *Product Links:*
+When you ask for 'products', I'll provide direct links to recommended treatments on Amazon for easy purchasing.
 
 🌿 Happy gardening!"""
             resp.message(help_text)
