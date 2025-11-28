@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local development
+.env
+*.log
+
+# Large files (handled by Git LFS)
+*.h5
+*.hdf5
+*.pth
+*.pt
+*.pkl
+*.joblib

@@ -1,7 +1,12 @@
-# Use Python 3.10 as the base image
+# Use Python 3.10 slim image for smaller size
 FROM python:3.10-slim
 
-# Set the working directory in the container
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=5000
+
+# Set working directory
 WORKDIR /app
 
 # Install system dependencies
@@ -9,20 +14,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file to the working directory
+# Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the model file
-COPY potato_disease_model.keras .
+# Copy application code
+COPY . .
 
-# Copy the application code
-COPY whatsapp_bot.py .
+# Verify the model file is present
+RUN echo "Verifying model file exists..." && \
+    if [ ! -f "potato_disease_model.keras" ]; then \
+        echo "Error: Model file not found!" && \
+        ls -la && \
+        exit 1; \
+    fi
 
 # Expose the port the app runs on
-EXPOSE 5000
+EXPOSE $PORT
 
 # Command to run the application
-CMD ["waitress-serve", "--port=5000", "whatsapp_bot:app"]
+CMD ["waitress-serve", "--port=$PORT", "whatsapp_bot:app"]

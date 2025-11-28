@@ -25,12 +25,23 @@ CLASS_NAMES = ["Early Blight", "Late Blight", "Healthy"]
 
 # Initialize model
 print("🔍 Loading custom trained model...")
-# Get the absolute path to the model file
-current_dir = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.join(current_dir, 'potato_disease_model.keras')
-print(f"Looking for model at: {model_path}")
-model = load_model(model_path)
-print("✅ Model loaded successfully!")
+try:
+    # Get the absolute path to the model file
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(current_dir, 'potato_disease_model.keras')
+    print(f"Looking for model at: {model_path}")
+    
+    # Verify the file exists
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model file not found at: {model_path}")
+        
+    model = load_model(model_path)
+    print("✅ Model loaded successfully!")
+except Exception as e:
+    print(f"❌ Error loading model: {str(e)}")
+    print("Current working directory:", os.getcwd())
+    print("Files in directory:", os.listdir(os.path.dirname(os.path.abspath(__file__))))
+    raise
 
 # Store the last prediction for each user
 last_prediction = {}
