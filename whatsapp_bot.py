@@ -195,14 +195,15 @@ def whatsapp_webhook():
             print(f"📥 Downloading image from: {media_url}")
             
             try:
-                # Download the image with proper authentication
-                auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                # Download the image with proper headers
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
                 image_response = requests.get(
                     media_url,
-                    auth=auth,
-                    headers={'User-Agent': 'Mozilla/5.0'},
-                    stream=True,
-                    timeout=10
+                    auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                    headers=headers,
+                    stream=True
                 )
                 
                 if image_response.status_code == 200:
@@ -237,15 +238,12 @@ def whatsapp_webhook():
                         print(f"❌ Error in image processing: {str(e)}")
                         resp.message("❌ Oops! I had trouble processing that image. Please try with a clearer photo of a potato leaf.")
                 else:
-                    print(f"❌ Failed to download image. Status: {image_response.status_code}")
-                    print(f"Response: {image_response.text}")
-                    resp.message("❌ Failed to process the image. Please try again.")
-                    return str(resp)
+                    print(f"❌ Failed to download image. Status code: {image_response.status_code}")
+                    resp.message("⚠️ I couldn't download that image. Please try sending it again.")
                     
-            except requests.exceptions.RequestException as e:
-                print(f"❌ Request error: {str(e)}")
-                resp.message("⚠️ Couldn't connect to the image server. Please try again later.")
-                return str(resp)
+            except Exception as e:
+                print(f"❌ Error downloading image: {str(e)}")
+                resp.message("❌ Something went wrong while processing your image. Please try again.")
             
             return str(resp)
 
