@@ -1,5 +1,6 @@
 import os
 import io
+import requests
 import numpy as np
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
