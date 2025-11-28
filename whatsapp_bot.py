@@ -89,61 +89,67 @@ def predict_image(image_bytes):
         img_array = np.expand_dims(img_array, axis=0)
         img_array = preprocess_input(img_array)
         
-        # Make prediction
+        # Get model predictions
         predictions = model.predict(img_array)
-        decoded_predictions = decode_predictions(predictions, top=5)[0]  # Get top 5 predictions
+        decoded_predictions = decode_predictions(predictions, top=10)[0]  # Get top 10 predictions
         
-        # Initialize results with all classes
-        results = {class_name: 0.0 for class_name in CLASS_NAMES}
+        # Initialize class weights
+        class_weights = {
+            'Early Blight': {'terms': ['early_blight', 'alternaria', 'fungal_spot', 'leaf_spot', 'target_spot'], 'weight': 1.0},
+            'Late Blight': {'terms': ['late_blight', 'phytophthora', 'blight', 'mildew'], 'weight': 1.0},
+            'Healthy': {'terms': ['leaf', 'foliage', 'plant', 'green', 'healthy', 'potato'], 'weight': 0.8}  # Slightly lower weight for healthy
+        }
         
-        # Map ImageNet classes to our classes
+        # Initialize scores
+        scores = {class_name: 0.0 for class_name in CLASS_NAMES}
+        
+        # Score each prediction
         for _, label, prob in decoded_predictions:
             label_lower = label.lower()
-            prob_percent = float(prob) * 100
+            prob_score = float(prob)
             
-            # Early Blight indicators
-            if any(keyword in label_lower for keyword in ['blight', 'spot', 'spotting', 'leaf spot', 'leafspot', 'disease', 'fungal']):
-                if any(keyword in label_lower for keyword in ['early', 'alternaria']):
-                    results['Early Blight'] += prob_percent * 1.5  # Boost early blight probability
-                elif any(keyword in label_lower for keyword in ['late', 'phytophthora']):
-                    results['Late Blight'] += prob_percent * 1.5  # Boost late blight probability
-                else:
-                    # General blight/disease terms - split between early and late blight
-                    results['Early Blight'] += prob_percent * 0.7
-                    results['Late Blight'] += prob_percent * 0.8
-            
-            # Healthy indicators
-            elif any(keyword in label_lower for keyword in ['leaf', 'plant', 'foliage', 'green', 'healthy']):
-                results['Healthy'] += prob_percent
+            # Check each class for matching terms
+            for class_name, class_info in class_weights.items():
+                for term in class_info['terms']:
+                    if term in label_lower:
+                        scores[class_name] += prob_score * class_info['weight']
+                        break  # Only match once per class
         
-        # Normalize results to sum to 100%
-        total = sum(results.values())
+        # Add bonus for specific patterns
+        if any('spot' in pred[1].lower() for pred in decoded_predictions[:3]):
+            scores['Early Blight'] += 0.2
+        if any('blight' in pred[1].lower() for pred in decoded_predictions[:3]):
+            scores['Late Blight'] += 0.3
+        
+        # Normalize scores to sum to 1
+        total = sum(scores.values())
         if total > 0:
-            results = {k: (v / total) * 100 for k, v in results.items()}
+            scores = {k: (v / total) * 100 for k, v in scores.items()}
         
         # Get the class with highest probability
-        predicted_class = max(results.items(), key=lambda x: x[1])[0]
+        predicted_class = max(scores.items(), key=lambda x: x[1])[0]
         
-        # Add some basic validation
-        if predicted_class == 'Healthy' and results['Healthy'] < 60:
-            # If healthy is predicted but confidence is low, check for diseases
-            if results['Early Blight'] > 30:
-                predicted_class = 'Early Blight'
-            elif results['Late Blight'] > 30:
-                predicted_class = 'Late Blight'
+        # Add confidence threshold
+        if scores[predicted_class] < 40:  # If no clear winner
+            if scores['Healthy'] > 30:  # Default to healthy if no clear disease
+                predicted_class = 'Healthy'
         
-        print(f"✅ Prediction: {predicted_class} | {results}")
-        return predicted_class, results
+        print(f"🔍 Prediction Analysis:")
+        for class_name, score in scores.items():
+            print(f"   - {class_name}: {score:.2f}%")
+        print(f"✅ Final Prediction: {predicted_class}")
+        
+        return predicted_class, scores
         
     except Exception as e:
-        print("❌ Error processing image:", e)
-        # Return mock data in case of error
-        mock_results = {
+        print("❌ Error in predict_image:", str(e))
+        # Return default healthy with low confidence
+        default_scores = {
             "Early Blight": 10.0,
             "Late Blight": 10.0,
             "Healthy": 80.0
         }
-        return "Healthy (Error)", mock_results
+        return "Healthy (Error)", default_scores
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp_bot():
