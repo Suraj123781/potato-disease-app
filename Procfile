@@ -1,1 +1,1 @@
-web: gunicorn whatsapp_bot:app
+web: gunicorn whatsapp_bot:app --workers=1 --threads=4 --timeout=120

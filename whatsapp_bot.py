@@ -1,4 +1,8 @@
 import os
+# Configure environment for CPU usage
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN optimizations for consistent CPU results
+
 import io
 import numpy as np
 import requests
@@ -95,6 +99,15 @@ DISEASE_INFO = {
     }
 }
 
+def download_media(media_url, save_path, auth):
+    response = requests.get(media_url, auth=auth)
+    if response.status_code == 200:
+        with open(save_path, "wb") as f:
+            f.write(response.content)
+        return save_path
+    else:
+        raise Exception(f"Failed to download media: {response.status_code}")
+
 def predict_image(image_bytes):
     try:
         # Load and preprocess the image
@@ -141,8 +154,9 @@ def predict_image(image_bytes):
         return "Healthy (Error)", mock_results
 
 @app.route("/whatsapp", methods=["POST"])
-def whatsapp_bot():
+def whatsapp_webhook():
     try:
+        # 1. Get incoming message data
         sender = request.values.get("From", "")
         incoming_msg = request.values.get("Body", "").strip().lower()
         num_media = int(request.values.get("NumMedia", 0))
@@ -152,70 +166,72 @@ def whatsapp_bot():
         print(f"💬 Message: {incoming_msg}")
         print(f"📷 Media count: {num_media}")
 
-        # Step 1: User uploads image
+        # 2. Handle image upload
         if num_media > 0:
             media_url = request.values.get("MediaUrl0")
             print(f"📥 Downloading image: {media_url}")
-            headers = {"User-Agent": "TwilioBot/1.0"}
-            image_response = requests.get(media_url, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN))
-            if image_response.status_code == 200:
-                predicted_class, results = predict_image(image_response.content)
-                if predicted_class:
-                    resp.message(
-                        f"✅ The leaf appears to be: *{predicted_class}*\n\n"
-                        "👉 Would you like *prevention tips* or *confidence levels*? Reply with 'prevention' or 'confidence'."
-                    )
+            
+            try:
+                # Download media
+                image_response = requests.get(media_url, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN))
+                if image_response.status_code == 200:
+                    # Preprocess and predict
+                    predicted_class, results = predict_image(image_response.content)
+                    
+                    # Store prediction for follow-up questions
                     last_prediction[sender] = {"class": predicted_class, "results": results}
+                    
+                    # Format response
+                    response = f"🌿 *Prediction Result*\n\n"
+                    response += f"✅ Detected: *{predicted_class}*\n\n"
+                    response += "Reply with:\n• 'prevention' for tips\n• 'products' for recommended products"
+                    
+                    resp.message(response)
                     print("📤 Prediction reply sent")
                 else:
-                    resp.message("⚠ Error: Could not process the image. Please try another one.")
-            else:
-                resp.message("⚠ Error downloading image. Please resend.")
+                    resp.message("⚠️ Error downloading image. Please try again.")
+            except Exception as e:
+                print(f"Error processing image: {e}")
+                resp.message("❌ Error processing image. Please try again with a clearer photo.")
+            
             return str(resp)
 
-        # Step 2: User asks for prevention tips or products
-        if ("prevent" in incoming_msg or "treatment" in incoming_msg or "product" in incoming_msg) and sender in last_prediction:
+        # 3. Handle text commands
+        if "prevent" in incoming_msg or "treatment" in incoming_msg and sender in last_prediction:
             disease = last_prediction[sender]["class"]
             info = DISEASE_INFO.get(disease, DISEASE_INFO["Healthy"])
             
             response = f"🌱 *{info['name']}*\n{info['description']}\n\n"
-            
-            if "prevent" in incoming_msg or "treatment" in incoming_msg:
-                response += "�️ *Prevention & Treatment Tips:*\n"
-                for tip in info["prevention"]:
-                    response += f"• {tip}\n"
-                response += "\n"
-            
-            if "product" in incoming_msg or "buy" in incoming_msg:
-                response += "🛒 *Recommended Products:*\n"
-                for product in info["products"]:
-                    response += f"• {product}\n"
-                
-                response += "\n🌐 *Where to Buy:*\n"
-                for link in info.get("buy_links", []):
-                    response += f"• {link}\n"
-            
-            response += "\n💡 *Need more help?* Reply with 'products' for purchase links."
+            response += "🛡 *Prevention & Treatment Tips:*\n"
+            for tip in info["prevention"]:
+                response += f"• {tip}\n"
             
             resp.message(response)
-            print("📤 Prevention tips and products sent")
-            return str(resp)
-
-        # Step 3: User replies "confidence"
-        if incoming_msg == "confidence" and sender in last_prediction:
+            print("📤 Prevention tips sent")
+            
+        elif ("product" in incoming_msg or "buy" in incoming_msg) and sender in last_prediction:
+            disease = last_prediction[sender]["class"]
+            info = DISEASE_INFO.get(disease, DISEASE_INFO["Healthy"])
+            
+            response = f"🛒 *Recommended Products for {info['name']}:*\n\n"
+            for product, link in zip(info["products"], info.get("buy_links", [])):
+                response += f"• {product}\n{link}\n\n"
+            
+            resp.message(response)
+            print("📤 Product recommendations sent")
+            
+        elif incoming_msg == "confidence" and sender in last_prediction:
             results = last_prediction[sender]["results"]
             msg_text = (
-                "📊 Confidence levels:\n"
-                f"- Early Blight: {results['Early Blight']:.2f}%\n"
-                f"- Late Blight: {results['Late Blight']:.2f}%\n"
-                f"- Healthy: {results['Healthy']:.2f}%"
+                "📊 *Confidence levels:*\n"
+                f"• Early Blight: {results['Early Blight']:.1f}%\n"
+                f"• Late Blight: {results['Late Blight']:.1f}%\n"
+                f"• Healthy: {results['Healthy']:.1f}%"
             )
             resp.message(msg_text)
             print("📤 Confidence levels sent")
-            return str(resp)
-
-        # Greetings and help
-        if "hi" in incoming_msg or "hello" in incoming_msg or "help" in incoming_msg:
+            
+        elif incoming_msg in ["hi", "hello", "help"]:
             help_text = """👋 *Welcome to Potato Disease Detector Bot!* 🌱
 
 I can help you identify potato plant diseases and provide prevention tips.
@@ -225,22 +241,19 @@ I can help you identify potato plant diseases and provide prevention tips.
 💬 After getting results, you can ask for:
   • 'prevention' - Get prevention tips
   • 'products' - See recommended products
-  • 'help' - Show this message
-
-*Supported diseases:*
-• Early Blight
-• Late Blight
-• Healthy plants
+  • 'confidence' - See prediction confidence levels
 
 🌿 Happy gardening!"""
             resp.message(help_text)
+            
         else:
             resp.message("🤖 I didn't understand that. Send a potato leaf photo or type 'help' for assistance.")
+        
         return str(resp)
-
+    
     except Exception as e:
-        print("❌ WhatsApp bot error:", e)
-        return "Error", 500
+        print("❌ WhatsApp webhook error:", e)
+        return "OK", 200
 
 @app.route("/health", methods=["GET"])
 def health():
