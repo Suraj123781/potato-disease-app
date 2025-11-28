@@ -6,9 +6,9 @@ from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from PIL import Image, ImageOps
 import tensorflow as tf
-from tensorflow.keras.applications import MobileNetV2
 from tensorflow.keras.preprocessing import image
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.models import load_model
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -24,8 +24,8 @@ TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 CLASS_NAMES = ["Early Blight", "Late Blight", "Healthy"]
 
 # Initialize model
-print("🔍 Loading pre-trained MobileNetV2 model...")
-model = MobileNetV2(weights='imagenet')
+print("🔍 Loading custom trained model...")
+model = load_model('potato_disease_model.keras')
 print("✅ Model loaded successfully!")
 
 # Store the last prediction for each user
@@ -35,47 +35,62 @@ last_prediction = {}
 DISEASE_INFO = {
     "Early Blight": {
         "name": "Early Blight",
-        "description": "Early blight is a common fungal disease that affects potato plants.",
+        "description": "Early blight is a common fungal disease that affects potato plants, causing dark spots with concentric rings on leaves.",
         "prevention": [
-            "Rotate crops regularly",
-            "Remove and destroy infected plants",
-            "Use disease-free seed potatoes",
-            "Apply fungicides preventatively"
+            "Rotate crops every 2-3 years",
+            "Remove and destroy infected plant debris",
+            "Water at the base of plants to keep foliage dry",
+            "Apply fungicides preventatively during wet weather"
         ],
         "products": [
-            "Copper-based fungicides",
-            "Chlorothalonil-based sprays",
-            "Mancozeb fungicides"
+            {"name": "Copper Fungicide Spray", "url": "https://example.com/copper-fungicide"},
+            {"name": "Chlorothalonil Fungicide", "url": "https://example.com/chlorothalonil"},
+            {"name": "Mancozeb Fungicide", "url": "https://example.com/mancozeb"}
+        ],
+        "buy_links": [
+            "🔗 Amazon: https://www.amazon.com/s?k=copper+fungicide+for+plants",
+            "🔗 Home Depot: https://www.homedepot.com/s/copper%2520fungicide",
+            "🔗 Local garden centers"
         ]
     },
     "Late Blight": {
         "name": "Late Blight",
-        "description": "Late blight is a serious disease that can destroy entire potato crops.",
+        "description": "A serious disease caused by Phytophthora infestans, leading to rapid plant destruction if not controlled.",
         "prevention": [
-            "Plant resistant varieties",
-            "Ensure good air circulation",
-            "Avoid overhead watering",
-            "Apply fungicides before infection"
+            "Plant certified disease-free seed potatoes",
+            "Ensure good air circulation between plants",
+            "Remove and destroy infected plants immediately",
+            "Apply fungicides before disease appears"
         ],
         "products": [
-            "Copper fungicides",
-            "Chlorothalonil",
-            "Metalaxyl-based fungicides"
+            {"name": "Phytophthora Fungicide", "url": "https://example.com/phytophthora-fungicide"},
+            {"name": "Copper Fungal Treatment", "url": "https://example.com/copper-treatment"},
+            {"name": "Systemic Fungicide", "url": "https://example.com/systemic-fungicide"}
+        ],
+        "buy_links": [
+            "🔗 Amazon: https://www.amazon.com/s?k=late+blight+fungicide",
+            "🔗 Lowe's: https://www.lowes.com/search?searchTerm=plant+fungicide",
+            "🔗 Agricultural supply stores"
         ]
     },
     "Healthy": {
         "name": "Healthy",
-        "description": "Your plant appears to be healthy! No signs of disease detected.",
+        "description": "Your potato plant appears to be healthy! Continue with good cultural practices to maintain plant health.",
         "prevention": [
-            "Continue good gardening practices",
-            "Monitor plants regularly",
-            "Maintain proper spacing",
-            "Water at the base of plants"
+            "Use balanced fertilizer (10-10-10 NPK)",
+            "Maintain consistent soil moisture",
+            "Monitor for pests regularly",
+            "Practice crop rotation"
         ],
         "products": [
-            "Balanced NPK fertilizer",
-            "Organic compost",
-            "General plant vitamins"
+            {"name": "Balanced NPK Fertilizer", "url": "https://example.com/npk-fertilizer"},
+            {"name": "Organic Compost", "url": "https://example.com/organic-compost"},
+            {"name": "Plant Vitamins", "url": "https://example.com/plant-vitamins"}
+        ],
+        "buy_links": [
+            "🔗 Amazon: https://www.amazon.com/s?k=organic+plant+fertilizer",
+            "🔗 Local garden centers",
+            "🔗 Home improvement stores"
         ]
     }
 }
@@ -84,34 +99,23 @@ def predict_image(image_bytes):
     try:
         # Load and preprocess the image
         img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
-        img = ImageOps.fit(img, (224, 224), Image.Resampling.LANCZOS)
-        img_array = image.img_to_array(img)
+        img = ImageOps.fit(img, (128, 128), Image.Resampling.LANCZOS)  # Match training size
+        img_array = img_to_array(img) / 255.0  # Normalize to [0,1]
         img_array = np.expand_dims(img_array, axis=0)
-        img_array = preprocess_input(img_array)
         
         # Make prediction
-        predictions = model.predict(img_array)
-        decoded_predictions = decode_predictions(predictions, top=3)[0]
+        predictions = model.predict(img_array, verbose=0)[0]
         
-        # Convert to our class format
-        results = {}
-        for _, label, prob in decoded_predictions:
-            label_lower = label.lower()
-            if 'blight' in label_lower or 'disease' in label_lower:
-                if 'early' in label_lower:
-                    results['Early Blight'] = float(prob) * 100
-                else:
-                    results['Late Blight'] = float(prob) * 100
-            else:
-                results['Healthy'] = float(prob) * 100
-        
-        # Ensure all classes are present
-        for class_name in CLASS_NAMES:
-            if class_name not in results:
-                results[class_name] = 0.0
+        # Map predictions to class names and format results
+        results = {
+            "Early Blight": float(predictions[0]) * 100,
+            "Late Blight": float(predictions[1]) * 100,
+            "Healthy": float(predictions[2]) * 100
+        }
         
         # Get the class with highest probability
         predicted_class = max(results.items(), key=lambda x: x[1])[0]
+        
         print(f"✅ Prediction: {predicted_class} | {results}")
         return predicted_class, results
         
@@ -174,9 +178,12 @@ def whatsapp_bot():
             if "product" in incoming_msg or "buy" in incoming_msg:
                 response += "🛒 *Recommended Products:*\n"
                 for product in info["products"]:
-                    response += f"• {product}\n"
+                    if isinstance(product, dict):
+                        response += f"• [{product['name']}]({product['url']})\n"
+                    else:
+                        response += f"• {product}\n"
                 
-                response += "\n🌐 *Where to Buy:*\n"
+                response += "\n🌐 *Where to Buy Products:*\n"
                 for link in info.get("buy_links", []):
                     response += f"• {link}\n"
             
