@@ -25,7 +25,11 @@ CLASS_NAMES = ["Early Blight", "Late Blight", "Healthy"]
 
 # Initialize model
 print("🔍 Loading custom trained model...")
-model = load_model('potato_disease_model.keras')
+# Get the absolute path to the model file
+current_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(current_dir, 'potato_disease_model.keras')
+print(f"Looking for model at: {model_path}")
+model = load_model(model_path)
 print("✅ Model loaded successfully!")
 
 # Store the last prediction for each user
