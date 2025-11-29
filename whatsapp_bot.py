@@ -8,6 +8,7 @@ import io
 import numpy as np
 import requests
 from flask import Flask, request
+from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 from PIL import Image, ImageOps
 import tensorflow as tf
@@ -214,78 +215,77 @@ def whatsapp_webhook():
             print(f"📥 Downloading image from: {media_url}")
             
             try:
-                # Download the image with proper Twilio authentication
                 print(f"🔑 Using Twilio Account SID: {TWILIO_ACCOUNT_SID}")
                 print(f"📎 Media URL: {media_url}")
                 
-                # Use requests session for better connection handling
-                session = requests.Session()
-                session.auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-                
-                # Add headers that some APIs might expect
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': 'image/*',
-                }
-                
                 try:
-                    # First try with auth in headers (some Twilio versions prefer this)
-                    image_response = session.get(
-                        media_url,
-                        headers=headers,
-                        stream=True,
-                        timeout=10
+                    # Initialize Twilio client
+                    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                    
+                    # Extract Media SID from URL
+                    media_sid = media_url.split('/')[-1]
+                    message_sid = media_url.split('/')[-3]
+                    
+                    print(f"🔍 Fetching media with SID: {media_sid}")
+                    
+                    # Download media using Twilio client
+                    media = client.messages(message_sid).media(media_sid).fetch()
+                    media_content = requests.get(
+                        f"https://api.twilio.com{media.uri.replace('.json', '')}",
+                        auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
                     )
                     
-                    # If 401, try with basic auth in URL
-                    if image_response.status_code == 401:
-                        print("🔄 Trying alternative authentication method...")
-                        auth_url = media_url.replace('https://', f'https://{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}@')
-                        image_response = session.get(
-                            auth_url,
-                            headers=headers,
-                            stream=True,
-                            timeout=10
-                        )
+                    if media_content.status_code == 200:
+                        print("✅ Successfully downloaded image using Twilio client")
+                        image_bytes = media_content.content
+                    else:
+                        print(f"❌ Failed to download image. Status code: {media_content.status_code}")
+                        resp.message("⚠️ I couldn't download that image. Please try sending it again.")
+                        return str(resp)
+                        
                 except Exception as e:
-                    print(f"❌ Error downloading image: {str(e)}")
-                    resp.message("⚠️ Sorry, I'm having trouble processing images right now. Please try again in a moment.")
-                    return str(resp)
-                
-                if image_response.status_code == 200:
-                    print("✅ Successfully downloaded image")
-                    image_bytes = image_response.content
-                    
-                    # Save the image temporarily for debugging
-                    with open('temp_image.jpg', 'wb') as f:
-                        f.write(image_bytes)
-                    print("💾 Saved image temporarily for debugging")
-                    
-                    # Process the image
+                    print(f"❌ Error downloading image with Twilio client: {str(e)}")
+                    # Fallback to direct download with auth
                     try:
-                        predicted_class, results = predict_image(image_bytes)
-                        print(f"🎯 Prediction result: {predicted_class}")
+                        print("🔄 Trying direct download with authentication...")
+                        auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                        image_response = requests.get(media_url, auth=auth, timeout=10)
                         
-                        # Store prediction for follow-up
-                        last_prediction[sender] = {"class": predicted_class, "results": results}
-                        
-                        # Prepare response
-                        response = f"🌿 *Analysis Complete!*\n\n"
-                        response += f"✅ Detected: *{predicted_class}*\n\n"
-                        response += "💡 What would you like to know?\n"
-                        response += "• 'prevention' - Get prevention tips\n"
-                        response += "• 'products' - Recommended products\n"
-                        response += "• 'confidence' - See prediction confidence"
-                        
-                        resp.message(response)
-                        print("📤 Sent prediction response")
-                        
-                    except Exception as e:
-                        print(f"❌ Error in image processing: {str(e)}")
-                        resp.message("❌ Oops! I had trouble processing that image. Please try with a clearer photo of a potato leaf.")
-                else:
-                    print(f"❌ Failed to download image. Status code: {image_response.status_code}")
-                    resp.message("⚠️ I couldn't download that image. Please try sending it again.")
+                        if image_response.status_code == 200:
+                            print("✅ Successfully downloaded image with direct auth")
+                            image_bytes = image_response.content
+                        else:
+                            print(f"❌ Direct download failed. Status: {image_response.status_code}")
+                            resp.message("⚠️ I'm having trouble accessing that image. Please try again.")
+                            return str(resp)
+                            
+                    except Exception as fallback_error:
+                        print(f"❌ Fallback download failed: {str(fallback_error)}")
+                        resp.message("⚠️ Sorry, I'm having trouble processing images right now. Please try again in a moment.")
+                        return str(resp)
+                
+                # Process the image
+                try:
+                    predicted_class, results = predict_image(image_bytes)
+                    print(f"🎯 Prediction result: {predicted_class}")
+                    
+                    # Store prediction for follow-up
+                    last_prediction[sender] = {"class": predicted_class, "results": results}
+                    
+                    # Prepare response
+                    response = f"🌿 *Analysis Complete!*\n\n"
+                    response += f"✅ Detected: *{predicted_class}*\n\n"
+                    response += "💡 What would you like to know?\n"
+                    response += "• 'prevention' - Get prevention tips\n"
+                    response += "• 'products' - Recommended products\n"
+                    response += "• 'confidence' - See prediction confidence"
+                    
+                    resp.message(response)
+                    print("📤 Sent prediction response")
+                    
+                except Exception as e:
+                    print(f"❌ Error in image processing: {str(e)}")
+                    resp.message("❌ Oops! I had trouble processing that image. Please try with a clearer photo of a potato leaf.")
                     
             except Exception as e:
                 print(f"❌ Error downloading image: {str(e)}")
