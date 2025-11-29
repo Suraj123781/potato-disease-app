@@ -39,19 +39,37 @@ def load_model():
         # Try to load from cache first
         if MODEL_PATH.exists():
             print("✅ Loading model from cache...")
-            return MobileNetV2(weights=str(MODEL_PATH))
+            base_model = MobileNetV2(weights=None, include_top=False, input_shape=(224, 224, 3))
+            x = base_model.output
+            x = tf.keras.layers.GlobalAveragePooling2D()(x)
+            predictions = tf.keras.layers.Dense(3, activation='softmax')(x)
+            model = tf.keras.models.Model(inputs=base_model.input, outputs=predictions)
+            model.load_weights(MODEL_PATH)
+            return model
         
-        # If not in cache, download and save
-        print("🌐 Downloading MobileNetV2 weights...")
-        model = MobileNetV2(weights='imagenet')
+        # If not in cache, create and save a new model
+        print("🌐 Creating new MobileNetV2 model...")
+        base_model = MobileNetV2(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
+        x = base_model.output
+        x = tf.keras.layers.GlobalAveragePooling2D()(x)
+        predictions = tf.keras.layers.Dense(3, activation='softmax')(x)
+        model = tf.keras.models.Model(inputs=base_model.input, outputs=predictions)
+        
+        # Save the model weights
         model.save_weights(MODEL_PATH)
-        print("✅ Model downloaded and cached successfully!")
+        print("✅ Model created and saved successfully!")
         return model
         
     except Exception as e:
         print(f"❌ Error loading model: {e}")
-        print("⚠️ Falling back to model with random weights")
-        return MobileNetV2(weights=None, classes=3)  # Fallback model
+        print("⚠️ Falling back to a simple model")
+        # Fallback to a simple model
+        model = tf.keras.Sequential([
+            tf.keras.layers.Flatten(input_shape=(224, 224, 3)),
+            tf.keras.layers.Dense(128, activation='relu'),
+            tf.keras.layers.Dense(3, activation='softmax')
+        ])
+        return model
 
 # Initialize model
 model = load_model()
