@@ -222,47 +222,57 @@ def whatsapp_webhook():
                     # Initialize Twilio client
                     client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
                     
-                    # Extract Media SID from URL
-                    media_sid = media_url.split('/')[-1]
-                    message_sid = media_url.split('/')[-3]
+                    # Extract Media SID and Message SID from URL
+                    parts = media_url.split('/')
+                    message_sid = parts[-3]
+                    media_sid = parts[-1]
                     
                     print(f"🔍 Fetching media with SID: {media_sid}")
                     
-                    # Download media using Twilio client
-                    media = client.messages(message_sid).media(media_sid).fetch()
-                    media_content = requests.get(
-                        f"https://api.twilio.com{media.uri.replace('.json', '')}",
-                        auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                    # Get the message object first
+                    message = client.messages(message_sid).fetch()
+                    
+                    # Get the media object
+                    media = client.messages(message_sid) \
+                                .media(media_sid) \
+                                .fetch()
+                    
+                    # Get the media content using the client's request method
+                    media_uri = f"https://api.twilio.com{media.uri.replace('.json', '')}"
+                    
+                    # Use the client's request method which handles auth automatically
+                    response = client.request(
+                        'GET',
+                        media_uri,
+                        stream=True
                     )
                     
-                    if media_content.status_code == 200:
+                    if response.status_code == 200:
                         print("✅ Successfully downloaded image using Twilio client")
-                        image_bytes = media_content.content
+                        image_bytes = response.content
                     else:
-                        print(f"❌ Failed to download image. Status code: {media_content.status_code}")
-                        resp.message("⚠️ I couldn't download that image. Please try sending it again.")
-                        return str(resp)
-                        
-                except Exception as e:
-                    print(f"❌ Error downloading image with Twilio client: {str(e)}")
-                    # Fallback to direct download with auth
-                    try:
+                        print(f"❌ Failed to download image. Status code: {response.status_code}")
+                        # Try one more time with direct URL and auth
                         print("🔄 Trying direct download with authentication...")
-                        auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-                        image_response = requests.get(media_url, auth=auth, timeout=10)
+                        response = requests.get(
+                            media_uri,
+                            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                            stream=True,
+                            timeout=10
+                        )
                         
-                        if image_response.status_code == 200:
+                        if response.status_code == 200:
                             print("✅ Successfully downloaded image with direct auth")
-                            image_bytes = image_response.content
+                            image_bytes = response.content
                         else:
-                            print(f"❌ Direct download failed. Status: {image_response.status_code}")
+                            print(f"❌ Direct download failed. Status: {response.status_code}")
                             resp.message("⚠️ I'm having trouble accessing that image. Please try again.")
                             return str(resp)
                             
-                    except Exception as fallback_error:
-                        print(f"❌ Fallback download failed: {str(fallback_error)}")
-                        resp.message("⚠️ Sorry, I'm having trouble processing images right now. Please try again in a moment.")
-                        return str(resp)
+                except Exception as e:
+                    print(f"❌ Error downloading image: {str(e)}")
+                    resp.message("⚠️ Sorry, I'm having trouble processing your image. Please try again in a moment.")
+                    return str(resp)
                 
                 # Process the image
                 try:
