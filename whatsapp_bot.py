@@ -218,88 +218,87 @@ def whatsapp_webhook():
                 print(f"🔑 Using Twilio Account SID: {TWILIO_ACCOUNT_SID}")
                 print(f"📎 Media URL: {media_url}")
                 
+                # Initialize Twilio client
+                client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                
+                # Extract Media SID and Message SID from URL
+                parts = media_url.split('/')
+                message_sid = parts[-3]
+                media_sid = parts[-1]
+                
+                print(f"🔍 Fetching media with SID: {media_sid}")
+                
                 try:
-                    # Initialize Twilio client
-                    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-                    
-                    # Extract Media SID and Message SID from URL
-                    parts = media_url.split('/')
-                    message_sid = parts[-3]
-                    media_sid = parts[-1]
-                    
-                    print(f"🔍 Fetching media with SID: {media_sid}")
-                    
-                    # Get the message object first
-                    message = client.messages(message_sid).fetch()
-                    
-                    # Get the media object
-                    media = client.messages(message_sid) \
-                                .media(media_sid) \
-                                .fetch()
-                    
-                    # Get the media content using the client's request method
+                    # Method 1: Use the client's built-in media fetching
+                    print("🔄 Trying Twilio client media fetch...")
+                    media = client.messages(message_sid).media(media_sid).fetch()
                     media_uri = f"https://api.twilio.com{media.uri.replace('.json', '')}"
                     
-                    # Use the client's request method which handles auth automatically
-                    response = client.request(
-                        'GET',
+                    # Download the media content
+                    response = requests.get(
                         media_uri,
-                        stream=True
+                        auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                        stream=True,
+                        timeout=10
                     )
                     
                     if response.status_code == 200:
-                        print("✅ Successfully downloaded image using Twilio client")
+                        print("✅ Successfully downloaded image using Twilio media URI")
                         image_bytes = response.content
                     else:
-                        print(f"❌ Failed to download image. Status code: {response.status_code}")
-                        # Try one more time with direct URL and auth
-                        print("🔄 Trying direct download with authentication...")
-                        response = requests.get(
-                            media_uri,
-                            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                            stream=True,
-                            timeout=10
+                        raise Exception(f"Media URI failed with status: {response.status_code}")
+                        
+                except Exception as e:
+                    print(f"❌ Twilio media fetch failed: {str(e)}")
+                    
+                    # Method 2: Try direct URL with auth
+                    print("🔄 Trying direct URL with authentication...")
+                    response = requests.get(
+                        media_url,
+                        auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                        stream=True,
+                        timeout=10
+                    )
+                    
+                    if response.status_code == 200:
+                        print("✅ Successfully downloaded image with direct URL")
+                        image_bytes = response.content
+                    else:
+                        # Method 3: Try with credentials in URL
+                        print("🔄 Trying with credentials in URL...")
+                        auth_url = media_url.replace(
+                            'https://', 
+                            f'https://{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}@'
                         )
+                        response = requests.get(auth_url, stream=True, timeout=10)
                         
                         if response.status_code == 200:
-                            print("✅ Successfully downloaded image with direct auth")
+                            print("✅ Successfully downloaded image with URL credentials")
                             image_bytes = response.content
                         else:
-                            print(f"❌ Direct download failed. Status: {response.status_code}")
-                            resp.message("⚠️ I'm having trouble accessing that image. Please try again.")
-                            return str(resp)
-                            
-                except Exception as e:
-                    print(f"❌ Error downloading image: {str(e)}")
-                    resp.message("⚠️ Sorry, I'm having trouble processing your image. Please try again in a moment.")
-                    return str(resp)
+                            raise Exception(f"All download methods failed. Last status: {response.status_code}")
                 
-                # Process the image
-                try:
-                    predicted_class, results = predict_image(image_bytes)
-                    print(f"🎯 Prediction result: {predicted_class}")
-                    
-                    # Store prediction for follow-up
-                    last_prediction[sender] = {"class": predicted_class, "results": results}
-                    
-                    # Prepare response
-                    response = f"🌿 *Analysis Complete!*\n\n"
-                    response += f"✅ Detected: *{predicted_class}*\n\n"
-                    response += "💡 What would you like to know?\n"
-                    response += "• 'prevention' - Get prevention tips\n"
-                    response += "• 'products' - Recommended products\n"
-                    response += "• 'confidence' - See prediction confidence"
-                    
-                    resp.message(response)
-                    print("📤 Sent prediction response")
-                    
-                except Exception as e:
-                    print(f"❌ Error in image processing: {str(e)}")
-                    resp.message("❌ Oops! I had trouble processing that image. Please try with a clearer photo of a potato leaf.")
-                    
+                # Process the image if download was successful
+                predicted_class, results = predict_image(image_bytes)
+                print(f"🎯 Prediction result: {predicted_class}")
+                
+                # Store prediction for follow-up
+                last_prediction[sender] = {"class": predicted_class, "results": results}
+                
+                # Prepare response
+                response = f"🌿 *Analysis Complete!*\n\n"
+                response += f"✅ Detected: *{predicted_class}*\n\n"
+                response += "💡 What would you like to know?\n"
+                response += "• 'prevention' - Get prevention tips\n"
+                response += "• 'products' - Recommended products\n"
+                response += "• 'confidence' - See prediction confidence"
+                
+                resp.message(response)
+                print("📤 Sent prediction response")
+                
             except Exception as e:
-                print(f"❌ Error downloading image: {str(e)}")
-                resp.message("❌ Something went wrong while processing your image. Please try again.")
+                print(f"❌ Error processing image: {str(e)}")
+                resp.message("❌ Oops! I had trouble processing that image. Please try with a clearer photo of a potato leaf.")
             
             return str(resp)
 
@@ -346,9 +345,9 @@ I can help you identify potato plant diseases and provide prevention tips.
 *How to use:*
 📸 Send a photo of a potato leaf for analysis
 💬 After getting results, you can ask for:
-  • 'prevention' - Get prevention tips
-  • 'products' - See recommended products
-  • 'confidence' - See prediction confidence levels
+  - 'prevention' - Get prevention tips
+  - 'products' - See recommended products
+  - 'confidence' - See prediction confidence levels
 
 🌿 Happy gardening!"""
             resp.message(help_text)
