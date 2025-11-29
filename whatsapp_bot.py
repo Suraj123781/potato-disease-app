@@ -31,7 +31,7 @@ CLASS_NAMES = ["Early Blight", "Late Blight", "Healthy"]
 # Model configuration
 MODEL_CACHE_DIR = Path("model_cache")
 MODEL_CACHE_DIR.mkdir(exist_ok=True)
-MODEL_PATH = MODEL_CACHE_DIR / "mobilenet_v2_weights_tf_dim_ordering_tf_kernels_1.0_224.h5"
+MODEL_PATH = MODEL_CACHE_DIR / "mobilenet_v2_weights_tf_dim_ordering_tf_kernels_1.0_224.weights.h5"
 
 def load_model():
     print("🔍 Loading pre-trained MobileNetV2 model...")
