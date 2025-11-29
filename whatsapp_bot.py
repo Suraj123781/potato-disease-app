@@ -214,16 +214,43 @@ def whatsapp_webhook():
             print(f"📥 Downloading image from: {media_url}")
             
             try:
-                # Download the image with proper headers
+                # Download the image with proper Twilio authentication
+                print(f"🔑 Using Twilio Account SID: {TWILIO_ACCOUNT_SID}")
+                print(f"📎 Media URL: {media_url}")
+                
+                # Use requests session for better connection handling
+                session = requests.Session()
+                session.auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                
+                # Add headers that some APIs might expect
                 headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'image/*',
                 }
-                image_response = requests.get(
-                    media_url,
-                    auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                    headers=headers,
-                    stream=True
-                )
+                
+                try:
+                    # First try with auth in headers (some Twilio versions prefer this)
+                    image_response = session.get(
+                        media_url,
+                        headers=headers,
+                        stream=True,
+                        timeout=10
+                    )
+                    
+                    # If 401, try with basic auth in URL
+                    if image_response.status_code == 401:
+                        print("🔄 Trying alternative authentication method...")
+                        auth_url = media_url.replace('https://', f'https://{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}@')
+                        image_response = session.get(
+                            auth_url,
+                            headers=headers,
+                            stream=True,
+                            timeout=10
+                        )
+                except Exception as e:
+                    print(f"❌ Error downloading image: {str(e)}")
+                    resp.message("⚠️ Sorry, I'm having trouble processing images right now. Please try again in a moment.")
+                    return str(resp)
                 
                 if image_response.status_code == 200:
                     print("✅ Successfully downloaded image")
