@@ -3,7 +3,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Flatten, Dense, Dropout, GlobalAveragePooling2D
+from tensorflow.keras.layers import Flatten, Dense, Dropout, GlobalAveragePooling2D, BatchNormalization
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, classification_report
@@ -56,19 +56,24 @@ if not (check_directory(train_dir) and check_directory(val_dir)):
     print(" Please check your data directories and try again.")
     exit(1)
 
-# Data augmentation and preprocessing
+# Enhanced data augmentation and preprocessing
 train_datagen = ImageDataGenerator(
     rescale=1./255,
-    rotation_range=20,
+    rotation_range=30,
     width_shift_range=0.2,
     height_shift_range=0.2,
     shear_range=0.2,
-    zoom_range=0.2,
+    zoom_range=0.3,
     horizontal_flip=True,
-    fill_mode='nearest'
+    vertical_flip=True,
+    brightness_range=[0.8, 1.2],
+    fill_mode='nearest',
+    validation_split=0.2  # Use 20% of training data for validation
 )
 
-val_datagen = ImageDataGenerator(rescale=1./255)
+val_datagen = ImageDataGenerator(
+    rescale=1./255
+)
 
 # Load training data
 print("\nLoading training data...")
@@ -78,80 +83,95 @@ train_generator = train_datagen.flow_from_directory(
     batch_size=BATCH_SIZE,
     class_mode='categorical',
     classes=CLASS_NAMES,
-    shuffle=True
+    shuffle=True,
+    subset='training'
 )
 
-# Load validation data
-print("\nLoading validation data...")
-validation_generator = val_datagen.flow_from_directory(
-    val_dir,
+validation_generator = train_datagen.flow_from_directory(
+    train_dir,
     target_size=IMG_SIZE,
     batch_size=BATCH_SIZE,
     class_mode='categorical',
     classes=CLASS_NAMES,
-    shuffle=False
+    shuffle=False,
+    subset='validation'
 )
 
-# Calculate class weights
-def calculate_class_weights(generator):
-    class_counts = {}
-    for _, labels in generator:
-        y_indices = np.argmax(labels, axis=1)
-        for idx in y_indices:
-            class_counts[idx] = class_counts.get(idx, 0) + 1
-        if len(class_counts) == len(generator.class_indices):
-            break
-    
-    total_samples = sum(class_counts.values())
-    num_classes = len(class_counts)
-    
-    class_weights = {}
-    for class_idx in class_counts:
-        class_weights[class_idx] = total_samples / (num_classes * class_counts[class_idx])
-    
-    print("Class weights:", class_weights)
-    return class_weights
+# Calculate class weights with more emphasis on minority classes
+class_weights = {}
+total_samples = sum([len(files) for _, _, files in os.walk(train_dir) if files])
+for i, cls in enumerate(CLASS_NAMES):
+    class_path = os.path.join(train_dir, cls)
+    if os.path.exists(class_path):
+        num_samples = len([f for f in os.listdir(class_path) if os.path.isfile(os.path.join(class_path, f))])
+        class_weights[i] = (1 / num_samples) * (total_samples / len(CLASS_NAMES))
 
-class_weights = calculate_class_weights(train_generator)
+print("Class weights:", class_weights)
 
 # Reset generators
 train_generator.reset()
 validation_generator.reset()
 
-# Build transfer learning model (EfficientNetB0)
+# Build transfer learning model (EfficientNetB0 with fine-tuning)
 base_model = tf.keras.applications.EfficientNetB0(
     input_shape=(256, 256, 3),
     include_top=False,
-    weights='imagenet'
+    weights='imagenet',
+    pooling='avg'  # Use global average pooling directly
 )
-base_model.trainable = False  # Freeze base model
+
+# Unfreeze some top layers for fine-tuning
+base_model.trainable = False
+for layer in base_model.layers[-20:]:
+    if not isinstance(layer, tf.keras.layers.BatchNormalization):
+        layer.trainable = True
 
 model = Sequential([
     base_model,
-    GlobalAveragePooling2D(),
-    Dense(128, activation='relu'),
+    Dropout(0.3),
+    Dense(256, activation='relu'),
+    BatchNormalization(),
     Dropout(0.5),
     Dense(3, activation='softmax')
 ])
 
-# Compile model
+# Compile model with class weights
 model.compile(
-    optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
     loss='categorical_crossentropy',
-    metrics=['accuracy']
+    metrics=['accuracy', 
+             tf.keras.metrics.Precision(name='precision'),
+             tf.keras.metrics.Recall(name='recall')]
 )
 
-# Callbacks
-callbacks = [
-    EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),
-    ModelCheckpoint(
-        'potato_disease_model.keras',
-        save_best_only=True,
-        save_weights_only=False,
-        monitor='val_accuracy',
-        mode='max'
-    )
-]
+# Learning rate scheduler
+reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
+    monitor='val_loss',
+    factor=0.2,
+    patience=3,
+    min_lr=1e-6,
+    verbose=1
+)
+
+# Early stopping
+early_stopping = EarlyStopping(
+    monitor='val_loss',
+    patience=10,
+    restore_best_weights=True,
+    verbose=1
+)
+
+# Model checkpoint
+model_checkpoint = ModelCheckpoint(
+    'potato_disease_model.keras',
+    save_best_only=True,
+    save_weights_only=False,
+    monitor='val_accuracy',
+    mode='max',
+    verbose=1
+)
+
+callbacks = [reduce_lr, early_stopping, model_checkpoint]
 
 # Print model summary
 model.summary()
