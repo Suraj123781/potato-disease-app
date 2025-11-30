@@ -1,12 +1,9 @@
 import os
-from pathlib import Path
-# Configure environment for CPU usage
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN optimizations for consistent CPU results
-
 import io
+import logging
 import numpy as np
 import requests
+from pathlib import Path
 from flask import Flask, request
 from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
@@ -17,14 +14,48 @@ from tensorflow.keras.preprocessing import image
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
 from dotenv import load_dotenv
 
+# Configure environment for CPU usage
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN optimizations for consistent CPU results
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('bot.log')
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # Load environment variables
 load_dotenv()
 
+# Validate environment variables
+def validate_environment():
+    required_vars = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN']
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    if missing_vars:
+        error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+# Initialize Flask app
 app = Flask(__name__)
 
-# Twilio credentials
+# Load and validate Twilio credentials
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+validate_environment()
+
+# Initialize Twilio client
+try:
+    twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    logger.info("Successfully initialized Twilio client")
+except Exception as e:
+    logger.error(f"Failed to initialize Twilio client: {str(e)}")
+    raise
 
 # Class names for predictions
 CLASS_NAMES = ["Early Blight", "Late Blight", "Healthy"]
@@ -142,14 +173,45 @@ DISEASE_INFO = {
     }
 }
 
-def download_media(media_url, save_path, auth):
-    response = requests.get(media_url, auth=auth)
-    if response.status_code == 200:
-        with open(save_path, "wb") as f:
-            f.write(response.content)
-        return save_path
-    else:
-        raise Exception(f"Failed to download media: {response.status_code}")
+def download_media(media_url):
+    """Download media from Twilio with proper authentication"""
+    try:
+        # First try with the direct URL and auth
+        response = requests.get(
+            media_url,
+            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+            stream=True,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            return response.content
+        
+        # If direct URL fails, try with .json endpoint
+        if not media_url.endswith('.json'):
+            json_url = f"{media_url}.json"
+            response = requests.get(
+                json_url,
+                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                timeout=10
+            )
+            if response.status_code == 200:
+                media_data = response.json()
+                content_url = media_data.get('redirect_to')
+                if content_url:
+                    response = requests.get(
+                        content_url,
+                        stream=True,
+                        timeout=10
+                    )
+                    if response.status_code == 200:
+                        return response.content
+        
+        raise Exception(f"Failed to download media. Status: {response.status_code}")
+        
+    except Exception as e:
+        logger.error(f"Media download error: {str(e)}")
+        raise
 
 def predict_image(image_bytes):
     try:
@@ -183,11 +245,11 @@ def predict_image(image_bytes):
         
         # Get the class with highest probability
         predicted_class = max(results.items(), key=lambda x: x[1])[0]
-        print(f"✅ Prediction: {predicted_class} | {results}")
+        logger.info(f"Prediction result: {predicted_class} - {results}")
         return predicted_class, results
         
     except Exception as e:
-        print("❌ Error processing image:", e)
+        logger.error(f"Error processing image: {str(e)}")
         # Return mock data in case of error
         mock_results = {
             "Early Blight": 10.0,
@@ -205,99 +267,44 @@ def whatsapp_webhook():
         num_media = int(request.values.get("NumMedia", 0))
         resp = MessagingResponse()
 
-        print(f"📨 From: {sender}")
-        print(f"💬 Message: {incoming_msg}")
-        print(f"📷 Media count: {num_media}")
+        logger.info(f"From: {sender}")
+        logger.info(f"Message: {incoming_msg}")
+        logger.info(f"Media count: {num_media}")
 
         # 2. Handle image upload
         if num_media > 0:
             media_url = request.values.get("MediaUrl0")
-            print(f"📥 Downloading image from: {media_url}")
+            logger.info(f"Downloading media from: {media_url}")
             
             try:
-                print(f"🔑 Using Twilio Account SID: {TWILIO_ACCOUNT_SID}")
-                print(f"📎 Media URL: {media_url}")
+                # Download the media content using the improved download_media function
+                image_bytes = download_media(media_url)
                 
-                # Initialize Twilio client
-                client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-                
-                # Extract Media SID and Message SID from URL
-                parts = media_url.split('/')
-                message_sid = parts[-3]
-                media_sid = parts[-1]
-                
-                print(f"🔍 Fetching media with SID: {media_sid}")
-                
-                try:
-                    # Method 1: Use the client's built-in media fetching
-                    print("🔄 Trying Twilio client media fetch...")
-                    media = client.messages(message_sid).media(media_sid).fetch()
-                    media_uri = f"https://api.twilio.com{media.uri.replace('.json', '')}"
-                    
-                    # Download the media content
-                    response = requests.get(
-                        media_uri,
-                        auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                        stream=True,
-                        timeout=10
-                    )
-                    
-                    if response.status_code == 200:
-                        print("✅ Successfully downloaded image using Twilio media URI")
-                        image_bytes = response.content
-                    else:
-                        raise Exception(f"Media URI failed with status: {response.status_code}")
-                        
-                except Exception as e:
-                    print(f"❌ Twilio media fetch failed: {str(e)}")
-                    
-                    # Method 2: Try direct URL with auth
-                    print("🔄 Trying direct URL with authentication...")
-                    response = requests.get(
-                        media_url,
-                        auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                        stream=True,
-                        timeout=10
-                    )
-                    
-                    if response.status_code == 200:
-                        print("✅ Successfully downloaded image with direct URL")
-                        image_bytes = response.content
-                    else:
-                        # Method 3: Try with credentials in URL
-                        print("🔄 Trying with credentials in URL...")
-                        auth_url = media_url.replace(
-                            'https://', 
-                            f'https://{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}@'
-                        )
-                        response = requests.get(auth_url, stream=True, timeout=10)
-                        
-                        if response.status_code == 200:
-                            print("✅ Successfully downloaded image with URL credentials")
-                            image_bytes = response.content
-                        else:
-                            raise Exception(f"All download methods failed. Last status: {response.status_code}")
-                
-                # Process the image if download was successful
+                # Process the image
                 predicted_class, results = predict_image(image_bytes)
-                print(f"🎯 Prediction result: {predicted_class}")
+                logger.info(f"Prediction result: {predicted_class} - {results}")
                 
                 # Store prediction for follow-up
                 last_prediction[sender] = {"class": predicted_class, "results": results}
                 
-                # Prepare response
-                response = f"🌿 *Analysis Complete!*\n\n"
-                response += f"✅ Detected: *{predicted_class}*\n\n"
-                response += "💡 What would you like to know?\n"
-                response += "• 'prevention' - Get prevention tips\n"
-                response += "• 'products' - Recommended products\n"
-                response += "• 'confidence' - See prediction confidence"
+                # Get disease info
+                disease_info = DISEASE_INFO.get(predicted_class, DISEASE_INFO["Healthy"])
                 
-                resp.message(response)
-                print("📤 Sent prediction response")
+                # Prepare response
+                response = MessagingResponse()
+                response.message(f"🌿 *Analysis Complete!*\n\n"
+                               f"✅ Detected: *{predicted_class}*\n\n"
+                               f"{disease_info['description']}\n\n"
+                               "💡 What would you like to know?\n"
+                               "• 'prevention' - Get prevention tips\n"
+                               "• 'products' - Recommended products\n"
+                               "• 'confidence' - See prediction confidence")
+                
+                logger.info("Successfully sent prediction response")
+                return str(response)
                 
             except Exception as e:
-                print(f"❌ Error processing image: {str(e)}")
+                logger.error(f"Error processing image: {str(e)}")
                 resp.message("❌ Oops! I had trouble processing that image. Please try with a clearer photo of a potato leaf.")
             
             return str(resp)
