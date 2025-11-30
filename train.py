@@ -1,118 +1,251 @@
 import os
-import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.layers import Flatten, Dense, Dropout, GlobalAveragePooling2D
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, classification_report
 
-# -----------------------------
-# Step 1: Resize Images (Optional)
-# -----------------------------
-def resize_images(input_dir, output_dir, target_size=(128, 128)):
-    for class_name in os.listdir(input_dir):
-        class_path = os.path.join(input_dir, class_name)
-        save_path = os.path.join(output_dir, class_name)
-        os.makedirs(save_path, exist_ok=True)
+# Set random seed for reproducibility
+tf.random.set_seed(42)
 
-        for img_name in os.listdir(class_path):
-            img_path = os.path.join(class_path, img_name)
-            img = cv2.imread(img_path)
-            if img is not None:
-                resized = cv2.resize(img, target_size)
-                cv2.imwrite(os.path.join(save_path, img_name), resized)
+# Constants
+IMG_SIZE = (256, 256)
+BATCH_SIZE = 32
+EPOCHS = 25
 
-# Uncomment to run resizing once
-# resize_images("data/train", "data_resized/train")
-# resize_images("data/test", "data_resized/test")
+# Data paths - adjust these paths to where your data is located
+data_dir = 'data'  # This should contain 'train' and 'val' subdirectories
+train_dir = os.path.join(data_dir, 'train')
+val_dir = os.path.join(data_dir, 'val')
 
-# -----------------------------
-# Step 2: Define Paths
-# -----------------------------
-train_dir = "data_resized/train"
-val_dir = "data_resized/val"
+# Class names must match the subdirectory names exactly
+CLASS_NAMES = ['Potato___Early_blight', 'Potato___Late_blight', 'Potato___healthy']
 
-# -----------------------------
-# Step 3: Preprocess Images
-# -----------------------------
-img_size = (128, 128)
-batch_size = 32
+# Print directory structure for debugging
+print("Current working directory:", os.getcwd())
+print("Train directory:", os.path.abspath(train_dir))
+print("Validation directory:", os.path.abspath(val_dir))
 
-train_gen = ImageDataGenerator(
+# Check if directories exist and contain data
+def check_directory(directory):
+    if not os.path.exists(directory):
+        print(f" Directory does not exist: {directory}")
+        return False
+    
+    classes = [d for d in os.listdir(directory) 
+              if os.path.isdir(os.path.join(directory, d))]
+    
+    if not classes:
+        print(f" No class directories found in: {directory}")
+        return False
+    
+    print(f" Found {len(classes)} classes in {directory}:")
+    for cls in classes:
+        cls_path = os.path.join(directory, cls)
+        num_files = len([f for f in os.listdir(cls_path) 
+                        if os.path.isfile(os.path.join(cls_path, f))])
+        print(f"   - {cls}: {num_files} images")
+    
+    return True
+
+# Check data directories
+if not (check_directory(train_dir) and check_directory(val_dir)):
+    print(" Please check your data directories and try again.")
+    exit(1)
+
+# Data augmentation and preprocessing
+train_datagen = ImageDataGenerator(
     rescale=1./255,
     rotation_range=20,
     width_shift_range=0.2,
     height_shift_range=0.2,
+    shear_range=0.2,
     zoom_range=0.2,
-    horizontal_flip=True
-)
-val_gen = ImageDataGenerator(rescale=1./255)
-
-train_data = train_gen.flow_from_directory(
-    train_dir, target_size=img_size, batch_size=batch_size, class_mode='categorical'
-)
-val_data = val_gen.flow_from_directory(
-    val_dir, target_size=img_size, batch_size=batch_size, class_mode='categorical'
+    horizontal_flip=True,
+    fill_mode='nearest'
 )
 
-# -----------------------------
-# Step 4: Build CNN Model
-# -----------------------------
+val_datagen = ImageDataGenerator(rescale=1./255)
+
+# Load training data
+print("\nLoading training data...")
+train_generator = train_datagen.flow_from_directory(
+    train_dir,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode='categorical',
+    classes=CLASS_NAMES,
+    shuffle=True
+)
+
+# Load validation data
+print("\nLoading validation data...")
+validation_generator = val_datagen.flow_from_directory(
+    val_dir,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode='categorical',
+    classes=CLASS_NAMES,
+    shuffle=False
+)
+
+# Calculate class weights
+def calculate_class_weights(generator):
+    class_counts = {}
+    for _, labels in generator:
+        y_indices = np.argmax(labels, axis=1)
+        for idx in y_indices:
+            class_counts[idx] = class_counts.get(idx, 0) + 1
+        if len(class_counts) == len(generator.class_indices):
+            break
+    
+    total_samples = sum(class_counts.values())
+    num_classes = len(class_counts)
+    
+    class_weights = {}
+    for class_idx in class_counts:
+        class_weights[class_idx] = total_samples / (num_classes * class_counts[class_idx])
+    
+    print("Class weights:", class_weights)
+    return class_weights
+
+class_weights = calculate_class_weights(train_generator)
+
+# Reset generators
+train_generator.reset()
+validation_generator.reset()
+
+# Build transfer learning model (EfficientNetB0)
+base_model = tf.keras.applications.EfficientNetB0(
+    input_shape=(256, 256, 3),
+    include_top=False,
+    weights='imagenet'
+)
+base_model.trainable = False  # Freeze base model
+
 model = Sequential([
-    Conv2D(32, (3,3), activation='relu', input_shape=(128,128,3)),
-    MaxPooling2D(2,2),
-    Conv2D(64, (3,3), activation='relu'),
-    MaxPooling2D(2,2),
-    Conv2D(128, (3,3), activation='relu'),
-    MaxPooling2D(2,2),
-    Flatten(),
+    base_model,
+    GlobalAveragePooling2D(),
     Dense(128, activation='relu'),
     Dropout(0.5),
-    Dense(3, activation='softmax')  # 3 classes
+    Dense(3, activation='softmax')
 ])
 
-# -----------------------------
-# Step 5: Compile Model
-# -----------------------------
-model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-
-# -----------------------------
-# Step 6: Train Model
-# -----------------------------
-early_stop = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
-
-history = model.fit(
-    train_data,
-    validation_data=val_data,
-    epochs=25,
-    callbacks=[early_stop],
-    verbose=1
+# Compile model
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+    loss='categorical_crossentropy',
+    metrics=['accuracy']
 )
 
-# -----------------------------
-# Step 7: Save Model (Keras v3 format)
-# -----------------------------
-model.save("potato_disease_model.keras", save_format="keras_v3")
-print("✅ Model saved as potato_disease_model.keras (Keras v3 format)")
+# Callbacks
+callbacks = [
+    EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),
+    ModelCheckpoint(
+        'potato_disease_model.keras',
+        save_best_only=True,
+        save_weights_only=False,
+        monitor='val_accuracy',
+        mode='max'
+    )
+]
 
-# -----------------------------
-# Step 8: Evaluate Model
-# -----------------------------
-val_loss, val_acc = model.evaluate(val_data)
-print(f"📊 Validation Accuracy: {val_acc*100:.2f}% | Loss: {val_loss:.4f}")
+# Print model summary
+model.summary()
 
-# -----------------------------
-# Step 9: Plot Accuracy
-# -----------------------------
-plt.figure(figsize=(6,4))
-plt.plot(history.history['accuracy'], label='Train Accuracy', color='blue')
-plt.plot(history.history['val_accuracy'], label='Validation Accuracy', color='orange')
-plt.title('Model Accuracy Over Epochs')
-plt.xlabel('Epochs')
-plt.ylabel('Accuracy')
-plt.legend()
-plt.tight_layout()
-plt.savefig("accuracy_plot.png")
-plt.show()
+# Train model with class weights
+print("\nStarting model training...")
+history = model.fit(
+    train_generator,
+    epochs=EPOCHS,
+    validation_data=validation_generator,
+    callbacks=callbacks,
+    class_weight=class_weights
+)
+
+# Save the final model
+model.save('potato_disease_model_final.keras')
+print("✅ Training completed and model saved!")
+
+# Evaluate the model
+print("\nEvaluating model...")
+validation_generator.reset()
+val_preds = model.predict(validation_generator, verbose=1)
+y_pred = np.argmax(val_preds, axis=1)
+y_true = validation_generator.classes
+class_names = list(validation_generator.class_indices.keys())
+
+# Print evaluation metrics
+print("\nConfusion Matrix:")
+print(confusion_matrix(y_true, y_pred))
+print("\nClassification Report:")
+print(classification_report(y_true, y_pred, target_names=class_names))
+
+# Generate and save confusion matrix plot
+try:
+    # Create confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    
+    # Plot confusion matrix
+    plt.figure(figsize=(8, 6))
+    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+    plt.title('Confusion Matrix')
+    plt.colorbar()
+    
+    # Add labels
+    tick_marks = np.arange(len(class_names))
+    plt.xticks(tick_marks, class_names, rotation=45)
+    plt.yticks(tick_marks, class_names)
+    
+    # Add text annotations
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            plt.text(j, i, format(cm[i, j], 'd'),
+                    ha="center", va="center",
+                    color="white" if cm[i, j] > thresh else "black")
+    
+    plt.tight_layout()
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+    
+    # Save the plot
+    plt.savefig('confusion_matrix.png')
+    print("✅ Confusion matrix saved as 'confusion_matrix.png'")
+    plt.close()
+    
+except Exception as e:
+    print(f"⚠️ Could not generate confusion matrix: {e}")
+
+# Plot training history
+try:
+    # Plot training & validation accuracy
+    plt.figure(figsize=(12, 4))
+    
+    plt.subplot(1, 2, 1)
+    plt.plot(history.history['accuracy'])
+    plt.plot(history.history['val_accuracy'])
+    plt.title('Model Accuracy')
+    plt.ylabel('Accuracy')
+    plt.xlabel('Epoch')
+    plt.legend(['Train', 'Validation'], loc='lower right')
+    
+    # Plot training & validation loss
+    plt.subplot(1, 2, 2)
+    plt.plot(history.history['loss'])
+    plt.plot(history.history['val_loss'])
+    plt.title('Model Loss')
+    plt.ylabel('Loss')
+    plt.xlabel('Epoch')
+    plt.legend(['Train', 'Validation'], loc='upper right')
+    
+    plt.tight_layout()
+    plt.savefig('training_history.png')
+    print("✅ Training history plot saved as 'training_history.png'")
+    plt.close()
+    
+except Exception as e:
+    print(f"⚠️ Could not generate training plots: {e}")
