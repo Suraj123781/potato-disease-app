@@ -175,25 +175,31 @@ DISEASE_INFO = {
 
 def download_media(media_url):
     """Download media from Twilio with proper authentication"""
+    import base64
+    
     logger.info(f"Attempting to download media from: {media_url}")
+    
+    # Create Basic Auth token
+    credentials = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
+    encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
     
     # Try multiple methods to download the media
     methods = [
-        # Method 1: Direct download with auth in headers
+        # Method 1: Using proper Basic Auth with base64 encoding
         {
-            'name': 'Direct download with auth headers',
+            'name': 'Basic Auth with base64 encoding',
             'function': lambda url: requests.get(
                 url,
                 headers={
-                    'Authorization': f'Basic {TWILIO_AUTH_TOKEN}'
+                    'Authorization': f'Basic {encoded_credentials}'
                 },
                 stream=True,
                 timeout=15
             )
         },
-        # Method 2: Using Twilio client
+        # Method 2: Using Twilio client with requests
         {
-            'name': 'Twilio client download',
+            'name': 'Twilio client with requests',
             'function': lambda url: requests.get(
                 url,
                 auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
@@ -201,11 +207,11 @@ def download_media(media_url):
                 timeout=15
             )
         },
-        # Method 3: Using requests with basic auth
+        # Method 3: Using the Twilio client's media URI
         {
-            'name': 'Basic auth with requests',
+            'name': 'Twilio client media URI',
             'function': lambda url: requests.get(
-                url,
+                url.replace('/Media/', f'/Accounts/{TWILIO_ACCOUNT_SID}/Messages/') + '.json',
                 auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
                 stream=True,
                 timeout=15
@@ -333,40 +339,14 @@ def whatsapp_webhook():
                 media_url = request.values.get("MediaUrl0")
                 logger.info(f" Processing media - Type: {media_content_type}, URL: {media_url}")
 
-                # Method 1: Try direct download first
+                # Try to download media using the enhanced download_media function
                 try:
-                    logger.info(" Attempting direct media download...")
+                    logger.info(" Attempting to download media...")
                     image_bytes = download_media(media_url)
                     logger.info(" Successfully downloaded media")
                 except Exception as e:
-                    logger.warning(f"Direct download failed: {str(e)}")
-                    # Method 2: Try using Twilio client
-                    logger.info(" Falling back to Twilio client...")
-                    try:
-                        message = twilio_client.messages(message_sid).fetch()
-                        media_list = message.media.list(limit=1)
-                        
-                        if media_list:
-                            media = media_list[0]
-                            media_uri = f"https://api.twilio.com{media.uri.replace('.json', '')}"
-                            
-                            response = requests.get(
-                                media_uri,
-                                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                                stream=True,
-                                timeout=15
-                            )
-                            
-                            if response.status_code == 200:
-                                image_bytes = response.content
-                                logger.info(" Successfully downloaded media via Twilio client")
-                            else:
-                                raise Exception(f"Twilio client download failed with status {response.status_code}")
-                        else:
-                            raise Exception("No media found in message")
-                    except Exception as e:
-                        logger.error(f"Twilio client download failed: {str(e)}")
-                        raise Exception("Could not download media. Please try again with a different image.")
+                    logger.error(f" Media download failed: {str(e)}")
+                    raise Exception("Could not download the image. Please try again with a different photo.")
 
                 # Process the downloaded image
                 predicted_class, results = predict_image(image_bytes)
@@ -378,16 +358,13 @@ def whatsapp_webhook():
                 # Get disease info
                 disease_info = DISEASE_INFO.get(predicted_class, DISEASE_INFO["Healthy"])
                 
-                # Prepare response
+                # Prepare initial response
                 response_msg = MessagingResponse()
                 response_msg.message(
-                    f" *Analysis Complete!*\n\n"
-                    f" Detected: *{predicted_class}*\n\n"
+                    f" The leaf appears to be: *{predicted_class}*\n\n"
                     f"{disease_info['description']}\n\n"
-                    " What would you like to know?\n"
-                    " • 'prevention' - Get prevention tips\n"
-                    " • 'products' - Recommended products\n"
-                    " • 'confidence' - See prediction confidence"
+                    " Would you like *prevention tips* or *confidence levels*? "
+                    "Reply with 'prevention' or 'confidence'."
                 )
                 
                 logger.info(" Successfully sent prediction response")
@@ -395,42 +372,50 @@ def whatsapp_webhook():
                 
             except Exception as e:
                 error_msg = f" Error processing image: {str(e)}"
-                logger.error(error_msg)
+                logger.error(error_msg, exc_info=True)
                 resp.message(" Oops! I had trouble processing that image. Please try with a clearer photo of a potato leaf.")
                 return str(resp)
 
         # 3. Handle text commands
-        if "prevent" in incoming_msg or "treatment" in incoming_msg and sender in last_prediction:
+        if "prevent" in incoming_msg and sender in last_prediction:
             disease = last_prediction[sender]["class"]
             info = DISEASE_INFO.get(disease, DISEASE_INFO["Healthy"])
             
-            response = f" *{info['name']}*\n{info['description']}\n\n"
-            response += " *Prevention & Treatment Tips:*\n"
-            for tip in info["prevention"]:
-                response += f" • {tip}\n"
+            # Send prevention tips
+            response = f" *{info['name']} - Prevention Tips*\n\n"
+            for i, tip in enumerate(info["prevention"], 1):
+                response += f"{i}. {tip}\n"
+            
+            # Add prompt for products
+            response += "\nWould you like to see recommended products? Reply with 'products'"
             
             resp.message(response)
             logger.info(" Sent prevention tips")
             
-        elif ("product" in incoming_msg or "buy" in incoming_msg) and sender in last_prediction:
+        elif "product" in incoming_msg and sender in last_prediction:
             disease = last_prediction[sender]["class"]
             info = DISEASE_INFO.get(disease, DISEASE_INFO["Healthy"])
             
             response = f" *Recommended Products for {info['name']}:*\n\n"
             for product, link in zip(info["products"], info.get("buy_links", [])):
-                response += f" • {product}\n{link}\n\n"
+                response += f"• {product}\n{link}\n\n"
             
             resp.message(response)
             logger.info(" Sent product recommendations")
             
         elif incoming_msg == "confidence" and sender in last_prediction:
             results = last_prediction[sender]["results"]
-            msg_text = (
-                " *Confidence levels:*\n"
-                f" • Early Blight: {results['Early Blight']:.1f}%\n"
-                f" • Late Blight: {results['Late Blight']:.1f}%\n"
-                f" • Healthy: {results['Healthy']:.1f}%"
-            )
+            disease = last_prediction[sender]["class"]
+            
+            # Sort results by confidence level (descending)
+            sorted_results = sorted(results.items(), key=lambda x: x[1], reverse=True)
+            
+            msg_text = f" *Confidence Levels for {disease}:*\n\n"
+            for condition, confidence in sorted_results:
+                msg_text += f"• {condition}: {confidence:.1f}%\n"
+            
+            msg_text += "\nWould you like prevention tips? Reply with 'prevention'"
+            
             resp.message(msg_text)
             logger.info(" Sent confidence levels")
             
