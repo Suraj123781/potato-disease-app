@@ -1,11 +1,12 @@
 import os
+# Configure environment for CPU usage
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN optimizations for consistent CPU results
+
 import io
-import logging
 import numpy as np
 import requests
-from pathlib import Path
 from flask import Flask, request
-from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 from PIL import Image, ImageOps
 import tensorflow as tf
@@ -14,97 +15,22 @@ from tensorflow.keras.preprocessing import image
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input, decode_predictions
 from dotenv import load_dotenv
 
-# Configure environment for CPU usage
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"  # Disable oneDNN optimizations for consistent CPU results
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('bot.log')
-    ]
-)
-logger = logging.getLogger(__name__)
-
 # Load environment variables
 load_dotenv()
 
-# Validate environment variables
-def validate_environment():
-    required_vars = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN']
-    missing_vars = [var for var in required_vars if not os.getenv(var)]
-    if missing_vars:
-        error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-
-# Initialize Flask app
 app = Flask(__name__)
 
-# Load and validate Twilio credentials
+# Twilio credentials
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
-validate_environment()
-
-# Initialize Twilio client
-try:
-    twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    logger.info("Successfully initialized Twilio client")
-except Exception as e:
-    logger.error(f"Failed to initialize Twilio client: {str(e)}")
-    raise
 
 # Class names for predictions
 CLASS_NAMES = ["Early Blight", "Late Blight", "Healthy"]
 
-# Model configuration
-MODEL_CACHE_DIR = Path("model_cache")
-MODEL_CACHE_DIR.mkdir(exist_ok=True)
-MODEL_PATH = MODEL_CACHE_DIR / "mobilenet_v2_weights_tf_dim_ordering_tf_kernels_1.0_224.weights.h5"
-
-def load_model():
-    print("🔍 Loading pre-trained MobileNetV2 model...")
-    try:
-        # Try to load from cache first
-        if MODEL_PATH.exists():
-            print("✅ Loading model from cache...")
-            base_model = MobileNetV2(weights=None, include_top=False, input_shape=(224, 224, 3))
-            x = base_model.output
-            x = tf.keras.layers.GlobalAveragePooling2D()(x)
-            predictions = tf.keras.layers.Dense(3, activation='softmax')(x)
-            model = tf.keras.models.Model(inputs=base_model.input, outputs=predictions)
-            model.load_weights(MODEL_PATH)
-            return model
-        
-        # If not in cache, create and save a new model
-        print("🌐 Creating new MobileNetV2 model...")
-        base_model = MobileNetV2(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
-        x = base_model.output
-        x = tf.keras.layers.GlobalAveragePooling2D()(x)
-        predictions = tf.keras.layers.Dense(3, activation='softmax')(x)
-        model = tf.keras.models.Model(inputs=base_model.input, outputs=predictions)
-        
-        # Save the model weights
-        model.save_weights(MODEL_PATH)
-        print("✅ Model created and saved successfully!")
-        return model
-        
-    except Exception as e:
-        print(f"❌ Error loading model: {e}")
-        print("⚠️ Falling back to a simple model")
-        # Fallback to a simple model
-        model = tf.keras.Sequential([
-            tf.keras.layers.Flatten(input_shape=(224, 224, 3)),
-            tf.keras.layers.Dense(128, activation='relu'),
-            tf.keras.layers.Dense(3, activation='softmax')
-        ])
-        return model
-
 # Initialize model
-model = load_model()
+print("🔍 Loading pre-trained MobileNetV2 model...")
+model = MobileNetV2(weights='imagenet')
+print("✅ Model loaded successfully!")
 
 # Store the last prediction for each user
 last_prediction = {}
@@ -173,104 +99,14 @@ DISEASE_INFO = {
     }
 }
 
-def download_media(media_url):
-    """Download media from Twilio with proper authentication"""
-    import base64
-    
-    logger.info(f"Attempting to download media from: {media_url}")
-    
-    # Create Basic Auth token
-    credentials = f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}"
-    encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
-    
-    # Try multiple methods to download the media
-    methods = [
-        # Method 1: Using proper Basic Auth with base64 encoding
-        {
-            'name': 'Basic Auth with base64 encoding',
-            'function': lambda url: requests.get(
-                url,
-                headers={
-                    'Authorization': f'Basic {encoded_credentials}'
-                },
-                stream=True,
-                timeout=15
-            )
-        },
-        # Method 2: Using Twilio client with requests
-        {
-            'name': 'Twilio client with requests',
-            'function': lambda url: requests.get(
-                url,
-                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                stream=True,
-                timeout=15
-            )
-        },
-        # Method 3: Using the Twilio client's media URI
-        {
-            'name': 'Twilio client media URI',
-            'function': lambda url: requests.get(
-                url.replace('/Media/', f'/Accounts/{TWILIO_ACCOUNT_SID}/Messages/') + '.json',
-                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                stream=True,
-                timeout=15
-            )
-        }
-    ]
-    
-    # Try each method until one works
-    for method in methods:
-        try:
-            logger.info(f"Trying {method['name']}...")
-            response = method['function'](media_url)
-            
-            if response.status_code == 200:
-                logger.info(f"Successfully downloaded media using {method['name']}")
-                return response.content
-            else:
-                logger.warning(f"{method['name']} failed with status {response.status_code}")
-                
-        except Exception as e:
-            logger.warning(f"{method['name']} failed: {str(e)}")
-            continue
-    
-    # If all methods fail, try with .json endpoint as last resort
-    if not media_url.endswith('.json'):
-        try:
-            json_url = f"{media_url}.json"
-            logger.info(f"Trying .json endpoint: {json_url}")
-            
-            response = requests.get(
-                json_url,
-                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                timeout=15
-            )
-            
-            if response.status_code == 200:
-                media_data = response.json()
-                content_url = media_data.get('uri', '').replace('.json', '')
-                
-                if not content_url and 'links' in media_data:
-                    content_url = media_data['links'].get('content_direct_temporary', '')
-                
-                if content_url:
-                    logger.info(f"Found content URL: {content_url}")
-                    response = requests.get(
-                        content_url,
-                        auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-                        stream=True,
-                        timeout=15
-                    )
-                    if response.status_code == 200:
-                        return response.content
-        except Exception as e:
-            logger.error(f"Error with .json endpoint: {str(e)}")
-    
-    # If we get here, all methods failed
-    error_msg = "All media download methods failed"
-    logger.error(error_msg)
-    raise Exception(error_msg)
+def download_media(media_url, save_path, auth):
+    response = requests.get(media_url, auth=auth)
+    if response.status_code == 200:
+        with open(save_path, "wb") as f:
+            f.write(response.content)
+        return save_path
+    else:
+        raise Exception(f"Failed to download media: {response.status_code}")
 
 def predict_image(image_bytes):
     try:
@@ -304,11 +140,11 @@ def predict_image(image_bytes):
         
         # Get the class with highest probability
         predicted_class = max(results.items(), key=lambda x: x[1])[0]
-        logger.info(f"Prediction result: {predicted_class} - {results}")
+        print(f"✅ Prediction: {predicted_class} | {results}")
         return predicted_class, results
         
     except Exception as e:
-        logger.error(f"Error processing image: {str(e)}")
+        print("❌ Error processing image:", e)
         # Return mock data in case of error
         mock_results = {
             "Early Blight": 10.0,
@@ -318,132 +154,106 @@ def predict_image(image_bytes):
         return "Healthy (Error)", mock_results
 
 @app.route("/whatsapp", methods=["POST"])
-def whatsapp_webhook():
+def whatsapp_bot():
     try:
-        # 1. Get incoming message data
         sender = request.values.get("From", "")
         incoming_msg = request.values.get("Body", "").strip().lower()
         num_media = int(request.values.get("NumMedia", 0))
-        message_sid = request.values.get("MessageSid", "")
-        media_content_type = request.values.get("MediaContentType0", "")
         resp = MessagingResponse()
 
-        logger.info(f" New message from: {sender}")
-        logger.info(f" Text: {incoming_msg}")
-        logger.info(f" Media count: {num_media}")
-        logger.info(f" Message SID: {message_sid}")
+        print(f"📨 From: {sender}")
+        print(f"💬 Message: {incoming_msg}")
+        print(f"📷 Media count: {num_media}")
 
-        # 2. Handle image upload
+        # Step 1: User uploads image
         if num_media > 0:
-            try:
-                media_url = request.values.get("MediaUrl0")
-                logger.info(f" Processing media - Type: {media_content_type}, URL: {media_url}")
+            media_url = request.values.get("MediaUrl0")
+            print(f"📥 Downloading image: {media_url}")
+            headers = {"User-Agent": "TwilioBot/1.0"}
+            image_response = requests.get(media_url, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN))
+            if image_response.status_code == 200:
+                predicted_class, results = predict_image(image_response.content)
+                if predicted_class:
+                    resp.message(
+                        f"✅ The leaf appears to be: *{predicted_class}*\n\n"
+                        "👉 Would you like *prevention tips* or *confidence levels*? Reply with 'prevention' or 'confidence'."
+                    )
+                    last_prediction[sender] = {"class": predicted_class, "results": results}
+                    print("📤 Prediction reply sent")
+                else:
+                    resp.message("⚠ Error: Could not process the image. Please try another one.")
+            else:
+                resp.message("⚠ Error downloading image. Please resend.")
+            return str(resp)
 
-                # Try to download media using the enhanced download_media function
-                try:
-                    logger.info(" Attempting to download media...")
-                    image_bytes = download_media(media_url)
-                    logger.info(" Successfully downloaded media")
-                except Exception as e:
-                    logger.error(f" Media download failed: {str(e)}")
-                    raise Exception("Could not download the image. Please try again with a different photo.")
-
-                # Process the downloaded image
-                predicted_class, results = predict_image(image_bytes)
-                logger.info(f" Prediction result: {predicted_class} - {results}")
-                
-                # Store prediction for follow-up
-                last_prediction[sender] = {"class": predicted_class, "results": results}
-                
-                # Get disease info
-                disease_info = DISEASE_INFO.get(predicted_class, DISEASE_INFO["Healthy"])
-                
-                # Prepare initial response
-                response_msg = MessagingResponse()
-                response_msg.message(
-                    f" The leaf appears to be: *{predicted_class}*\n\n"
-                    f"{disease_info['description']}\n\n"
-                    " Would you like *prevention tips* or *confidence levels*? "
-                    "Reply with 'prevention' or 'confidence'."
-                )
-                
-                logger.info(" Successfully sent prediction response")
-                return str(response_msg)
-                
-            except Exception as e:
-                error_msg = f" Error processing image: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                resp.message(" Oops! I had trouble processing that image. Please try with a clearer photo of a potato leaf.")
-                return str(resp)
-
-        # 3. Handle text commands
-        if "prevent" in incoming_msg and sender in last_prediction:
+        # Step 2: User asks for prevention tips or products
+        if ("prevent" in incoming_msg or "treatment" in incoming_msg or "product" in incoming_msg) and sender in last_prediction:
             disease = last_prediction[sender]["class"]
             info = DISEASE_INFO.get(disease, DISEASE_INFO["Healthy"])
             
-            # Send prevention tips
-            response = f" *{info['name']} - Prevention Tips*\n\n"
-            for i, tip in enumerate(info["prevention"], 1):
-                response += f"{i}. {tip}\n"
+            response = f"🌱 *{info['name']}*\n{info['description']}\n\n"
             
-            # Add prompt for products
-            response += "\nWould you like to see recommended products? Reply with 'products'"
+            if "prevent" in incoming_msg or "treatment" in incoming_msg:
+                response += "�️ *Prevention & Treatment Tips:*\n"
+                for tip in info["prevention"]:
+                    response += f"• {tip}\n"
+                response += "\n"
+            
+            if "product" in incoming_msg or "buy" in incoming_msg:
+                response += "🛒 *Recommended Products:*\n"
+                for product in info["products"]:
+                    response += f"• {product}\n"
+                
+                response += "\n🌐 *Where to Buy:*\n"
+                for link in info.get("buy_links", []):
+                    response += f"• {link}\n"
+            
+            response += "\n💡 *Need more help?* Reply with 'products' for purchase links."
             
             resp.message(response)
-            logger.info(" Sent prevention tips")
-            
-        elif "product" in incoming_msg and sender in last_prediction:
-            disease = last_prediction[sender]["class"]
-            info = DISEASE_INFO.get(disease, DISEASE_INFO["Healthy"])
-            
-            response = f" *Recommended Products for {info['name']}:*\n\n"
-            for product, link in zip(info["products"], info.get("buy_links", [])):
-                response += f"• {product}\n{link}\n\n"
-            
-            resp.message(response)
-            logger.info(" Sent product recommendations")
-            
-        elif incoming_msg == "confidence" and sender in last_prediction:
+            print("📤 Prevention tips and products sent")
+            return str(resp)
+
+        # Step 3: User replies "confidence"
+        if incoming_msg == "confidence" and sender in last_prediction:
             results = last_prediction[sender]["results"]
-            disease = last_prediction[sender]["class"]
-            
-            # Sort results by confidence level (descending)
-            sorted_results = sorted(results.items(), key=lambda x: x[1], reverse=True)
-            
-            msg_text = f" *Confidence Levels for {disease}:*\n\n"
-            for condition, confidence in sorted_results:
-                msg_text += f"• {condition}: {confidence:.1f}%\n"
-            
-            msg_text += "\nWould you like prevention tips? Reply with 'prevention'"
-            
+            msg_text = (
+                "📊 Confidence levels:\n"
+                f"- Early Blight: {results['Early Blight']:.2f}%\n"
+                f"- Late Blight: {results['Late Blight']:.2f}%\n"
+                f"- Healthy: {results['Healthy']:.2f}%"
+            )
             resp.message(msg_text)
-            logger.info(" Sent confidence levels")
-            
-        elif incoming_msg in ["hi", "hello", "help"]:
-            help_text = """ *Welcome to Potato Disease Detector Bot!* 
+            print("📤 Confidence levels sent")
+            return str(resp)
+
+        # Greetings and help
+        if "hi" in incoming_msg or "hello" in incoming_msg or "help" in incoming_msg:
+            help_text = """👋 *Welcome to Potato Disease Detector Bot!* 🌱
 
 I can help you identify potato plant diseases and provide prevention tips.
 
 *How to use:*
- Send a photo of a potato leaf for analysis
- After getting results, you can ask for:
-  - 'prevention' - Get prevention tips
-  - 'products' - See recommended products
-  - 'confidence' - See prediction confidence levels
+📸 Send a photo of a potato leaf for analysis
+💬 After getting results, you can ask for:
+  • 'prevention' - Get prevention tips
+  • 'products' - See recommended products
+  • 'help' - Show this message
 
- Happy gardening!"""
+*Supported diseases:*
+• Early Blight
+• Late Blight
+• Healthy plants
+
+🌿 Happy gardening!"""
             resp.message(help_text)
-            logger.info(" Sent help message")
-            
         else:
-            resp.message(" I didn't understand that. Send a potato leaf photo or type 'help' for assistance.")
-            logger.info(" Unrecognized command")
-        
+            resp.message("🤖 I didn't understand that. Send a potato leaf photo or type 'help' for assistance.")
         return str(resp)
-    
+
     except Exception as e:
-        logger.error(f" Webhook error: {str(e)}", exc_info=True)
-        return "OK", 200
+        print("❌ WhatsApp bot error:", e)
+        return "Error", 500
 
 @app.route("/health", methods=["GET"])
 def health():
