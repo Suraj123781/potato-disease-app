@@ -59,11 +59,81 @@ CLASS_NAMES = ["Potato___Early_blight", "Potato___Late_blight", "Potato___health
 # Initialize model
 print("🔍 Loading custom potato disease model...")
 try:
-    model = load_model('potato_disease_model.keras')
-    print("✅ Custom model loaded successfully!")
+    # Get the directory of the current script
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Try to load the model with different possible file names
+    model_files = [
+        os.path.join(current_dir, 'potato_disease_model_final.keras'),
+        os.path.join(current_dir, 'potato_disease_model.keras'),
+        os.path.join(current_dir, 'potato_disease_model.h5')
+    ]
+    
+    model_loaded = False
+    for model_file in model_files:
+        try:
+            print(f"Checking for model at: {model_file}")
+            if os.path.exists(model_file):
+                print(f"Found model file: {model_file}")
+                print(f"File size: {os.path.getsize(model_file) / (1024*1024):.2f} MB")
+                print("Attempting to load model...")
+                
+                # Add custom_objects to handle compatibility
+                custom_objects = {
+                    "InputLayer": tf.keras.layers.InputLayer,
+                    "Adam": tf.keras.optimizers.Adam
+                }
+                
+                # Try different loading approaches
+                try:
+                    # Try loading with custom objects first
+                    model = load_model(model_file, custom_objects=custom_objects, compile=False)
+                    print("✅ Successfully loaded model with custom objects")
+                except Exception as e:
+                    print("⚠️ First load attempt failed, trying alternative approach...")
+                    # If that fails, try loading just the weights
+                    from tensorflow.keras.models import model_from_json
+                    
+                    # For .h5 files
+                    if model_file.endswith('.h5'):
+                        with open(model_file.replace('.h5', '.json'), 'r') as json_file:
+                            loaded_model_json = json_file.read()
+                        model = model_from_json(loaded_model_json, custom_objects=custom_objects)
+                        model.load_weights(model_file)
+                    # For .keras files
+                    else:
+                        model = load_model(model_file, compile=False)
+                
+                # Recompile the model
+                model.compile(optimizer='adam',
+                            loss='sparse_categorical_crossentropy',
+                            metrics=['accuracy'])
+                
+                print(f"✅ Successfully loaded and compiled model: {os.path.basename(model_file)}")
+                model_loaded = True
+                break
+                
+            else:
+                print(f"⚠️ Model file not found: {model_file}")
+                
+        except Exception as e:
+            print(f"❌ Error loading model: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    if not model_loaded:
+        print("\n❌ Could not load any model file. Please ensure you have one of these files in the same directory:")
+        for f in model_files:
+            print(f"- {os.path.basename(f)}")
+        print("\nTrain the model first by running train.py")
+        exit(1)
+        
 except Exception as e:
-    print(f"❌ Error loading model: {e}")
-    print("⚠️ Make sure you've trained the model first by running train.py")
+    print(f"\n❌ Error initializing model: {str(e)}")
+    import traceback
+    traceback.print_exc()
+    print("\n⚠️ Make sure you've trained the model first by running train.py")
     exit(1)
 
 def predict_disease(image_bytes):
