@@ -1,271 +1,162 @@
+# train_improved.py
 import os
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Flatten, Dense, Dropout, GlobalAveragePooling2D, BatchNormalization
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from tensorflow.keras.optimizers import Adam
+from sklearn.metrics import classification_report, confusion_matrix
 import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix, classification_report
+import seaborn as sns
+from sklearn.utils.class_weight import compute_class_weight
 
-# Set random seed for reproducibility
-tf.random.set_seed(42)
-
-# Constants
+# Configuration
 IMG_SIZE = (256, 256)
-BATCH_SIZE = 32
-EPOCHS = 25
+BATCH_SIZE = 16
+EPOCHS = 20
 
-# Data paths - adjust these paths to where your data is located
-data_dir = 'data'  # This should contain 'train' and 'val' subdirectories
-train_dir = os.path.join(data_dir, 'train')
-val_dir = os.path.join(data_dir, 'val')
+# Data paths
+train_dir = "data_resized/train"
+val_dir = "data_resized/val"
 
-# Class names must match the subdirectory names exactly
-CLASS_NAMES = ['Potato___Early_blight', 'Potato___Late_blight', 'Potato___healthy']
+# Calculate class weights
+def get_class_weights(directory):
+    classes = sorted(os.listdir(directory))
+    class_counts = []
+    for class_name in classes:
+        class_path = os.path.join(directory, class_name)
+        if os.path.isdir(class_path):
+            num_samples = len(os.listdir(class_path))
+            class_counts.append(num_samples)
+    total = sum(class_counts)
+    class_weights = {i: total/(len(class_counts) * count) for i, count in enumerate(class_counts)}
+    return class_weights
 
-# Print directory structure for debugging
-print("Current working directory:", os.getcwd())
-print("Train directory:", os.path.abspath(train_dir))
-print("Validation directory:", os.path.abspath(val_dir))
+class_weights = get_class_weights(train_dir)
+print("Class weights:", class_weights)
 
-# Check if directories exist and contain data
-def check_directory(directory):
-    if not os.path.exists(directory):
-        print(f" Directory does not exist: {directory}")
-        return False
-    
-    classes = [d for d in os.listdir(directory) 
-              if os.path.isdir(os.path.join(directory, d))]
-    
-    if not classes:
-        print(f" No class directories found in: {directory}")
-        return False
-    
-    print(f" Found {len(classes)} classes in {directory}:")
-    for cls in classes:
-        cls_path = os.path.join(directory, cls)
-        num_files = len([f for f in os.listdir(cls_path) 
-                        if os.path.isfile(os.path.join(cls_path, f))])
-        print(f"   - {cls}: {num_files} images")
-    
-    return True
-
-# Check data directories
-if not (check_directory(train_dir) and check_directory(val_dir)):
-    print(" Please check your data directories and try again.")
-    exit(1)
-
-# Enhanced data augmentation and preprocessing
+# Data augmentation
 train_datagen = ImageDataGenerator(
     rescale=1./255,
-    rotation_range=30,
+    rotation_range=40,
     width_shift_range=0.2,
     height_shift_range=0.2,
     shear_range=0.2,
     zoom_range=0.3,
     horizontal_flip=True,
-    vertical_flip=True,
-    brightness_range=[0.8, 1.2],
     fill_mode='nearest',
-    validation_split=0.2  # Use 20% of training data for validation
+    brightness_range=[0.7, 1.3]
 )
 
-val_datagen = ImageDataGenerator(
-    rescale=1./255
-)
+val_datagen = ImageDataGenerator(rescale=1./255)
 
-# Load training data
-print("\nLoading training data...")
+# Data generators
 train_generator = train_datagen.flow_from_directory(
     train_dir,
     target_size=IMG_SIZE,
     batch_size=BATCH_SIZE,
     class_mode='categorical',
-    classes=CLASS_NAMES,
-    shuffle=True,
-    subset='training'
+    shuffle=True
 )
 
-validation_generator = train_datagen.flow_from_directory(
-    train_dir,
+validation_generator = val_datagen.flow_from_directory(
+    val_dir,
     target_size=IMG_SIZE,
     batch_size=BATCH_SIZE,
     class_mode='categorical',
-    classes=CLASS_NAMES,
-    shuffle=False,
-    subset='validation'
+    shuffle=False
 )
 
-# Calculate class weights with more emphasis on minority classes
-class_weights = {}
-total_samples = sum([len(files) for _, _, files in os.walk(train_dir) if files])
-for i, cls in enumerate(CLASS_NAMES):
-    class_path = os.path.join(train_dir, cls)
-    if os.path.exists(class_path):
-        num_samples = len([f for f in os.listdir(class_path) if os.path.isfile(os.path.join(class_path, f))])
-        class_weights[i] = (1 / num_samples) * (total_samples / len(CLASS_NAMES))
+# Build model
+def create_model():
+    model = Sequential([
+        # First Convolutional Block
+        Conv2D(32, (3,3), activation='relu', padding='same', input_shape=(*IMG_SIZE, 3)),
+        BatchNormalization(),
+        Conv2D(32, (3,3), activation='relu', padding='same'),
+        BatchNormalization(),
+        MaxPooling2D(2, 2),
+        Dropout(0.3),
+        
+        # Second Convolutional Block
+        Conv2D(64, (3,3), activation='relu', padding='same'),
+        BatchNormalization(),
+        Conv2D(64, (3,3), activation='relu', padding='same'),
+        BatchNormalization(),
+        MaxPooling2D(2, 2),
+        Dropout(0.4),
+        
+        # Third Convolutional Block
+        Conv2D(128, (3,3), activation='relu', padding='same'),
+        BatchNormalization(),
+        Conv2D(128, (3,3), activation='relu', padding='same'),
+        BatchNormalization(),
+        MaxPooling2D(2, 2),
+        Dropout(0.5),
+        
+        # Dense Layers
+        Flatten(),
+        Dense(256, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.5),
+        Dense(3, activation='softmax')
+    ])
+    return model
 
-print("Class weights:", class_weights)
+model = create_model()
 
-# Reset generators
-train_generator.reset()
-validation_generator.reset()
-
-# Build transfer learning model (EfficientNetB0 with fine-tuning)
-base_model = tf.keras.applications.EfficientNetB0(
-    input_shape=(256, 256, 3),
-    include_top=False,
-    weights='imagenet',
-    pooling='avg'  # Use global average pooling directly
-)
-
-# Unfreeze some top layers for fine-tuning
-base_model.trainable = False
-for layer in base_model.layers[-20:]:
-    if not isinstance(layer, tf.keras.layers.BatchNormalization):
-        layer.trainable = True
-
-model = Sequential([
-    base_model,
-    Dropout(0.3),
-    Dense(256, activation='relu'),
-    BatchNormalization(),
-    Dropout(0.5),
-    Dense(3, activation='softmax')
-])
-
-# Compile model with class weights
+# Compile model
 model.compile(
-    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+    optimizer=Adam(learning_rate=0.0001),
     loss='categorical_crossentropy',
-    metrics=['accuracy', 
-             tf.keras.metrics.Precision(name='precision'),
-             tf.keras.metrics.Recall(name='recall')]
+    metrics=['accuracy']
 )
 
-# Learning rate scheduler
-reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
-    monitor='val_loss',
-    factor=0.2,
-    patience=3,
-    min_lr=1e-6,
-    verbose=1
-)
+# Callbacks
+callbacks = [
+    EarlyStopping(patience=10, restore_best_weights=True),
+    ModelCheckpoint('best_model.keras', save_best_only=True),
+    ReduceLROnPlateau(factor=0.2, patience=3)
+]
 
-# Early stopping
-early_stopping = EarlyStopping(
-    monitor='val_loss',
-    patience=10,
-    restore_best_weights=True,
-    verbose=1
-)
-
-# Model checkpoint
-model_checkpoint = ModelCheckpoint(
-    'potato_disease_model.keras',
-    save_best_only=True,
-    save_weights_only=False,
-    monitor='val_accuracy',
-    mode='max',
-    verbose=1
-)
-
-callbacks = [reduce_lr, early_stopping, model_checkpoint]
-
-# Print model summary
-model.summary()
-
-# Train model with class weights
-print("\nStarting model training...")
+# Train model
 history = model.fit(
     train_generator,
-    epochs=EPOCHS,
     validation_data=validation_generator,
+    epochs=EPOCHS,
     callbacks=callbacks,
     class_weight=class_weights
 )
 
-# Save the final model
-model.save('potato_disease_model_final.keras')
-print("✅ Training completed and model saved!")
-
-# Evaluate the model
+# Evaluate model
 print("\nEvaluating model...")
 validation_generator.reset()
-val_preds = model.predict(validation_generator, verbose=1)
-y_pred = np.argmax(val_preds, axis=1)
-y_true = validation_generator.classes
-class_names = list(validation_generator.class_indices.keys())
+predictions = model.predict(validation_generator)
+predicted_classes = np.argmax(predictions, axis=1)
 
-# Print evaluation metrics
-print("\nConfusion Matrix:")
-print(confusion_matrix(y_true, y_pred))
+# Classification report
 print("\nClassification Report:")
-print(classification_report(y_true, y_pred, target_names=class_names))
+print(classification_report(
+    validation_generator.classes,
+    predicted_classes,
+    target_names=list(validation_generator.class_indices.keys())
+))
 
-# Generate and save confusion matrix plot
-try:
-    # Create confusion matrix
-    cm = confusion_matrix(y_true, y_pred)
-    
-    # Plot confusion matrix
-    plt.figure(figsize=(8, 6))
-    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    plt.title('Confusion Matrix')
-    plt.colorbar()
-    
-    # Add labels
-    tick_marks = np.arange(len(class_names))
-    plt.xticks(tick_marks, class_names, rotation=45)
-    plt.yticks(tick_marks, class_names)
-    
-    # Add text annotations
-    thresh = cm.max() / 2.
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            plt.text(j, i, format(cm[i, j], 'd'),
-                    ha="center", va="center",
-                    color="white" if cm[i, j] > thresh else "black")
-    
-    plt.tight_layout()
-    plt.ylabel('True label')
-    plt.xlabel('Predicted label')
-    
-    # Save the plot
-    plt.savefig('confusion_matrix.png')
-    print("✅ Confusion matrix saved as 'confusion_matrix.png'")
-    plt.close()
-    
-except Exception as e:
-    print(f"⚠️ Could not generate confusion matrix: {e}")
+# Confusion matrix
+cm = confusion_matrix(validation_generator.classes, predicted_classes)
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=validation_generator.class_indices.keys(),
+            yticklabels=validation_generator.class_indices.keys())
+plt.title('Confusion Matrix')
+plt.ylabel('True Label')
+plt.xlabel('Predicted Label')
+plt.tight_layout()
+plt.savefig('confusion_matrix.png')
+plt.show()
 
-# Plot training history
-try:
-    # Plot training & validation accuracy
-    plt.figure(figsize=(12, 4))
-    
-    plt.subplot(1, 2, 1)
-    plt.plot(history.history['accuracy'])
-    plt.plot(history.history['val_accuracy'])
-    plt.title('Model Accuracy')
-    plt.ylabel('Accuracy')
-    plt.xlabel('Epoch')
-    plt.legend(['Train', 'Validation'], loc='lower right')
-    
-    # Plot training & validation loss
-    plt.subplot(1, 2, 2)
-    plt.plot(history.history['loss'])
-    plt.plot(history.history['val_loss'])
-    plt.title('Model Loss')
-    plt.ylabel('Loss')
-    plt.xlabel('Epoch')
-    plt.legend(['Train', 'Validation'], loc='upper right')
-    
-    plt.tight_layout()
-    plt.savefig('training_history.png')
-    print("✅ Training history plot saved as 'training_history.png'")
-    plt.close()
-    
-except Exception as e:
-    print(f"⚠️ Could not generate training plots: {e}")
+# Save final model
+model.save('potato_disease_model_improved.keras')
+print("Model saved as 'potato_disease_model_improved.keras'")
